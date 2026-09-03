@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider } from "@/src/context/AuthContext";
+import { PushRegistrar } from "@/src/hooks/usePushRegistration";
 import { colors } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
@@ -62,6 +63,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <AuthProvider>
+            <PushRegistrar />
             <StatusBar style="light" />
             <ResponsiveShell>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface }, animation: "slide_from_right" }} />
