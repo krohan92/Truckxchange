@@ -34,6 +34,28 @@ export default function CreateListing() {
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [vinLoading, setVinLoading] = useState(false);
+
+  const decodeVin = async () => {
+    const v = vin.trim().toUpperCase();
+    if (v.length !== 17) { setError("VIN must be exactly 17 characters"); return; }
+    setError("");
+    setVinLoading(true);
+    try {
+      const data = await apiFetch<{ year: string; make: string; model: string; body_class: string; error_text: string }>(`/vin/${v}`, { auth: false });
+      if (!data.year && !data.make) {
+        setError(data.error_text || "No details found for that VIN — you can still enter fields manually");
+        return;
+      }
+      if (data.year) setYear(data.year);
+      if (data.make) setMake(data.make);
+      if (data.model && !title.trim()) setTitle(`${data.year} ${data.make} ${data.model}`.trim());
+    } catch (e: any) {
+      setError(e.message || "VIN lookup failed");
+    } finally {
+      setVinLoading(false);
+    }
+  };
 
   const pickPhoto = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsMultipleSelection: true, selectionLimit: 6 });
@@ -137,10 +159,12 @@ export default function CreateListing() {
           <View style={{ flex: 1 }}><Field label="DOT number" placeholder="DOT-123456" value={dot} onChangeText={setDot} testID="input-dot" /></View>
           <View style={{ flex: 1 }}><Field label="MC number" placeholder="MC-654321" value={mc} onChangeText={setMc} /></View>
         </View>
-        <View style={{ flexDirection: "row", gap: spacing.md }}>
-          <View style={{ flex: 1 }}><Field label="VIN" placeholder="1FUJA6..." autoCapitalize="characters" value={vin} onChangeText={setVin} /></View>
-          <View style={{ flex: 1 }}><Field label="Plate" placeholder="TX-RIG100" autoCapitalize="characters" value={plate} onChangeText={setPlate} /></View>
+        <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-end" }}>
+          <View style={{ flex: 1 }}><Field label="VIN" placeholder="1FUJA6..." autoCapitalize="characters" maxLength={17} value={vin} onChangeText={setVin} /></View>
+          <Btn title={vinLoading ? "Looking up…" : "Decode VIN"} variant="secondary" onPress={decodeVin} loading={vinLoading} disabled={vin.trim().length !== 17} />
         </View>
+        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Enter a 17-character VIN and tap Decode to auto-fill year and make.</Txt>
+        <Field label="Plate" placeholder="TX-RIG100" autoCapitalize="characters" value={plate} onChangeText={setPlate} />
         <Field label="Insurance provider" placeholder="e.g. Progressive Commercial" value={insProvider} onChangeText={setInsProvider} testID="input-ins-provider" />
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           <View style={{ flex: 1 }}><Field label="Policy #" placeholder="POL-000123" value={insPolicy} onChangeText={setInsPolicy} testID="input-ins-policy" /></View>
