@@ -449,6 +449,42 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(get_current_
     return {"path": path}
 
 
+@api.get("/vin/{vin}")
+async def decode_vin(vin: str):
+    """Look up year/make/model from a VIN using NHTSA's free public vPIC API."""
+    vin = vin.strip().upper()
+    if len(vin) != 17:
+        raise HTTPException(status_code=400, detail="VIN must be 17 characters")
+
+    def _fetch():
+        resp = requests.get(
+            f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/{vin}",
+            params={"format": "json"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    try:
+        data = await run_in_threadpool(_fetch)
+    except Exception as e:
+        logger.error(f"VIN decode failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not reach VIN decoder. Try again or enter details manually.")
+
+    results = data.get("Results") or []
+    row = results[0] if results else {}
+    return {
+        "vin": vin,
+        "year": row.get("ModelYear") or "",
+        "make": row.get("Make") or "",
+        "model": row.get("Model") or "",
+        "body_class": row.get("BodyClass") or "",
+        "vehicle_type": row.get("VehicleType") or "",
+        "gvwr": row.get("GVWR") or "",
+        "error_text": row.get("ErrorText") or "",
+    }
+
+
 @api.get("/files/{path:path}")
 async def files(path: str, token: Optional[str] = Query(None)):
     rec = await db.uploads.find_one({"path": path})
@@ -855,14 +891,14 @@ async def seed():
                 "kind": "truck", "category": "Semi", "location": "Dallas, TX",
                 "daily_rate": 320, "year": 2022, "make": "Freightliner", "capacity": "80,000 lb GVWR",
                 "description": "Long-haul sleeper cab, APU equipped, fresh service. Ready for OTR.",
-                "photos": ["https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
+                "photos": ["https://images.unsplash.com/photo-1779583074717-e60fa13131ce?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
             },
             {
                 "title": "48ft Reefer Trailer",
                 "kind": "trailer", "category": "Reefer", "location": "Atlanta, GA",
                 "daily_rate": 145, "year": 2021, "make": "Utility", "capacity": "44,000 lb",
                 "description": "Carrier reefer unit, continuous run, temp logging. Perfect for cold chain loads.",
-                "photos": ["https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
+                "photos": ["https://images.unsplash.com/photo-1601467995997-ac1ae9a8fff4?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
             },
             {
                 "title": "53ft Flatbed Trailer",
@@ -876,7 +912,7 @@ async def seed():
                 "kind": "truck", "category": "Box", "location": "Chicago, IL",
                 "daily_rate": 180, "year": 2023, "make": "Isuzu", "capacity": "12,000 lb",
                 "description": "Non-CDL box truck, liftgate, e-track. Great for last mile and moves.",
-                "photos": ["https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
+                "photos": ["https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
             },
         ]
         ppm_list = [2.20, 1.90, 1.75, 1.40]
