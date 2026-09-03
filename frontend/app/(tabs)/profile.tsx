@@ -16,6 +16,7 @@ export default function Profile() {
   const [rate, setRate] = useState(0.15);
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
   const [connectBusy, setConnectBusy] = useState(false);
+  const [reseedBusy, setReseedBusy] = useState(false);
 
   useFocusEffect(useCallback(() => {
     refresh();
@@ -77,6 +78,20 @@ export default function Profile() {
               <Pressable testID="rate-plus" onPress={() => updateRate(0.01)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
             </View>
             <Btn title="Review Verifications" icon="clipboard-check" variant="secondary" onPress={() => router.push("/admin")} testID="admin-review-btn" />
+            <Btn
+              title={reseedBusy ? "Reseeding…" : "Reseed Demo Listings"}
+              icon="refresh"
+              variant="ghost"
+              loading={reseedBusy}
+              onPress={async () => {
+                setReseedBusy(true);
+                try {
+                  await apiFetch("/admin/reseed-listings", { method: "POST" });
+                } catch {}
+                finally { setReseedBusy(false); }
+              }}
+              testID="reseed-listings-btn"
+            />
           </Card>
         )}
 
