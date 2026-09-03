@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +21,8 @@ export default function BookingDetail() {
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState("");
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState("");
 
   const load = useCallback(async () => {
     const data = await apiFetch<any>(`/bookings/${id}`);
@@ -48,6 +50,19 @@ export default function BookingDetail() {
   const setStatus = async (status: string) => {
     await apiFetch(`/bookings/${id}/status`, { method: "POST", body: { status } });
     await load();
+  };
+
+  const payNow = async () => {
+    setPayError("");
+    setPayBusy(true);
+    try {
+      const res = await apiFetch<{ checkout_url: string }>(`/bookings/${id}/pay`, { method: "POST" });
+      await Linking.openURL(res.checkout_url);
+    } catch (e: any) {
+      setPayError(e.message || "Could not start checkout");
+    } finally {
+      setPayBusy(false);
+    }
   };
 
   const submitReview = async () => {
@@ -149,8 +164,14 @@ export default function BookingDetail() {
             <Btn title="Approve" onPress={() => setStatus("approved")} style={{ flex: 1 }} testID="approve-btn" />
           </View>
         )}
-        {b.status === "approved" && (
-          <Btn title={isOwner ? "Mark Completed" : "Start Trip"} onPress={() => setStatus(isOwner ? "completed" : "active")} testID="progress-btn" />
+        {b.status === "approved" && isOwner && (
+          <Btn title="Mark Completed" onPress={() => setStatus("completed")} testID="progress-btn" />
+        )}
+        {b.status === "approved" && !isOwner && (
+          <View style={{ gap: spacing.sm }}>
+            <Btn title="Pay Now" icon="credit-card" onPress={payNow} loading={payBusy} testID="pay-now-btn" />
+            {payError ? <Txt color={colors.error} size={type.sm}>{payError}</Txt> : null}
+          </View>
         )}
       </ScrollView>
     </View>
