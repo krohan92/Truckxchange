@@ -175,6 +175,10 @@ class MessageIn(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
 
+class PushTokenIn(BaseModel):
+    token: str
+
+
 # --------------------------------------------------------------- helpers -----
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -232,8 +236,25 @@ async def get_settings() -> dict:
     return s
 
 
+def _send_expo_push(tokens: list, title: str, body: str, data: dict):
+    """Blocking call to Expo's push service. Run inside a threadpool."""
+    if not tokens:
+        return
+    messages = [{"to": t, "title": title, "body": body, "data": data or {}, "sound": "default"} for t in tokens]
+    try:
+        requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=messages,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=15,
+        )
+    except Exception as e:
+        logger.error(f"expo push send failed: {e}")
+
+
 async def notify(user_id: str, title: str, body: str, ntype: str, data: Optional[dict] = None):
-    """Create an in-app notification. Push delivery can be layered on later."""
+    """Create an in-app notification, and also push it to the user's phone
+    if they've registered a device (via POST /push/register)."""
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -245,6 +266,11 @@ async def notify(user_id: str, title: str, body: str, ntype: str, data: Optional
         "created_at": now_iso(),
     }
     await db.notifications.insert_one(dict(doc))
+
+    recipient = await db.users.find_one({"id": user_id}, {"_id": 0, "push_tokens": 1})
+    tokens = (recipient or {}).get("push_tokens") or []
+    if tokens:
+        await run_in_threadpool(_send_expo_push, tokens, title, body, data or {})
 
 
 # --------------------------------------------------------- AI verification ---
@@ -939,6 +965,19 @@ async def mark_read(nid: str, user: dict = Depends(get_current_user)):
 @api.post("/notifications/read-all")
 async def mark_all_read(user: dict = Depends(get_current_user)):
     await db.notifications.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@api.post("/push/register")
+async def register_push_token(data: PushTokenIn, user: dict = Depends(get_current_user)):
+    """Called once per device after the user grants notification permission."""
+    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"push_tokens": data.token}})
+    return {"ok": True}
+
+
+@api.post("/push/unregister")
+async def unregister_push_token(data: PushTokenIn, user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$pull": {"push_tokens": data.token}})
     return {"ok": True}
 
 
