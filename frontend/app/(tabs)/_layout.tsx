@@ -53,6 +53,10 @@ export default function TabsLayout() {
         options={{ href: show(["renter", "owner", "vendor", "admin"]), title: role === "vendor" ? "Jobs" : "Roadside", tabBarIcon: ({ color, size }) => <Icon name="wrench-outline" size={size} color={color} /> }}
       />
       <Tabs.Screen
+        name="messages"
+        options={{ href: undefined, title: "Messages", tabBarIcon: ({ color, size }) => <Icon name="message-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{ href: undefined, title: "Profile", tabBarIcon: ({ color, size }) => <Icon name="account-circle-outline" size={size} color={color} /> }}
       />
