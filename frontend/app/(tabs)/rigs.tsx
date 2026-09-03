@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Btn } from "@/src/ui";
+import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 export default function Rigs() {
@@ -35,9 +36,12 @@ export default function Rigs() {
           <Txt size={type.sm} color={colors.onSurfaceSecondary}>Your fleet</Txt>
           <Display size={type.xxl}>MY RIGS</Display>
         </View>
-        <Pressable testID="add-rig-btn" onPress={() => router.push("/create-listing")} style={styles.addBtn}>
-          <Icon name="plus" size={24} color={colors.onBrand} />
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <NotificationBell />
+          <Pressable testID="add-rig-btn" onPress={() => router.push("/create-listing")} style={styles.addBtn}>
+            <Icon name="plus" size={24} color={colors.onBrand} />
+          </Pressable>
+        </View>
       </View>
       {loading ? <Loader /> : (
         <FlatList

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Btn, Card } from "@/src/ui";
+import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
@@ -42,9 +43,12 @@ export default function Dashboard() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={colors.brand} />}
       showsVerticalScrollIndicator={false}
     >
-      <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Fleet command</Txt>
-        <Display size={type.xxl}>OWNER DASHBOARD</Display>
+      <View style={[styles.header, { paddingTop: insets.top + spacing.sm, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
+        <View>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary}>Fleet command</Txt>
+          <Display size={type.xxl}>OWNER DASHBOARD</Display>
+        </View>
+        <NotificationBell />
       </View>
 
       <View style={styles.metrics}>

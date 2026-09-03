@@ -24,22 +24,20 @@ Build a truck & trailer rental marketplace (like Turo). Truckers submit a driver
 - Tow/maintenance bidding marketplace, cheapest bid highlighted.
 
 ## Implemented (2026-06)
-- Auth (JWT) with roles renter/owner/vendor/admin; seeded demo accounts.
+- Auth (JWT) with roles renter/owner/vendor/admin; seeded demo accounts; login screen + one-tap quick role login.
 - AI license + insurance verification (GPT-5.4 vision) with admin review.
 - Marketplace: search, category chips, seeded semi/trailer listings.
-- Listing detail with load-details form + live commission split module.
-- Booking flow (blocked until license verified) + owner approve/decline.
-- Owner dashboard (earnings/active/pending) + My Rigs (create/soft-delete + photo upload).
+- Listing detail with swipeable photo gallery, compliance card (DOT/insurance), load form + live commission split; celebratory booking confirmation modal.
+- Booking flow (blocked until license verified) + owner approve/decline; role-based landing (owner→Dashboard, vendor→Jobs).
+- Owner dashboard + My Rigs (multi-photo create up to 6, soft-delete).
+- **Compliance gate**: owners must enter DOT number + insurance (provider/policy/expiry); expired or missing insurance blocks listing (backend 400/422).
 - Roadside bidding: post requests, vendors bid, poster accepts cheapest.
 - Inspection before/after video upload via object storage.
 - Admin: verification review + commission-rate stepper.
-- Object storage upload/serve endpoints.
-- **Sign-in temporarily bypassed**: app auto-enters as a trucker for testing (auth screen retained for later).
-- Replaced pickup-style render with verified semi-truck imagery across auth hero + listings.
+- **In-app notifications**: inbox screen + bell with unread badge on all main headers. Events: booking requested, approved, declined, rig picked up (trip started), trip completed, bid received, bid accepted. (Real push deferred — user will add google-services.json later.)
 
 ## Backlog
-- P1: Re-enable sign-in / onboarding gate when ready.
-- P1: In-app role switcher for testing all experiences without login.
+- P1: Real phone push (Emergent-managed) once user provides google-services.json (package com.emergent.fleetrentcheck.vpnmy2). Notification write points already centralized in `notify()`.
 - P2: Secure `/api/files` for sensitive docs (owner/admin only).
 - P2: Real payments (Stripe) for the split.
 - P2: Booking date-conflict checks; messaging between owner/renter.

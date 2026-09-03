@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Btn } from "@/src/ui";
+import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const CAT_ICON: any = { tow: "tow-truck", repair: "wrench", maintenance: "oil" };
@@ -33,11 +34,14 @@ export default function Roadside() {
           <Txt size={type.sm} color={colors.onSurfaceSecondary}>{isVendor ? "Win the job" : "Tow & repair"}</Txt>
           <Display size={type.xxl}>{isVendor ? "OPEN JOBS" : "ROADSIDE"}</Display>
         </View>
-        {!isVendor && (
-          <Pressable testID="add-request-btn" onPress={() => router.push("/create-request")} style={styles.addBtn}>
-            <Icon name="plus" size={24} color={colors.onBrand} />
-          </Pressable>
-        )}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          {!isVendor && (
+            <Pressable testID="add-request-btn" onPress={() => router.push("/create-request")} style={styles.addBtn}>
+              <Icon name="plus" size={24} color={colors.onBrand} />
+            </Pressable>
+          )}
+          <NotificationBell />
+        </View>
       </View>
       {loading ? <Loader /> : (
         <FlatList

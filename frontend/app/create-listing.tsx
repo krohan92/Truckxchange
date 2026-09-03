@@ -23,6 +23,13 @@ export default function CreateListing() {
   const [make, setMake] = useState("");
   const [capacity, setCapacity] = useState("");
   const [description, setDescription] = useState("");
+  const [dot, setDot] = useState("");
+  const [mc, setMc] = useState("");
+  const [vin, setVin] = useState("");
+  const [plate, setPlate] = useState("");
+  const [insProvider, setInsProvider] = useState("");
+  const [insPolicy, setInsPolicy] = useState("");
+  const [insExpiry, setInsExpiry] = useState("");
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,6 +51,10 @@ export default function CreateListing() {
   const submit = async () => {
     setError("");
     if (!title.trim() || !location.trim() || !rate) { setError("Title, location and daily rate are required"); return; }
+    if (!dot.trim() || !insProvider.trim() || !insPolicy.trim() || !insExpiry.trim()) {
+      setError("DOT number and insurance details are required for compliance");
+      return;
+    }
     setBusy(true);
     try {
       await apiFetch("/listings", {
@@ -54,6 +65,8 @@ export default function CreateListing() {
           year: year ? parseInt(year, 10) : null,
           make, capacity, description,
           photos,
+          dot_number: dot, mc_number: mc, vin, plate,
+          insurance_provider: insProvider, insurance_policy: insPolicy, insurance_expiry: insExpiry,
         },
       });
       router.back();
@@ -114,6 +127,25 @@ export default function CreateListing() {
           <View style={{ flex: 1 }}><Field label="Capacity" placeholder="80,000 lb" value={capacity} onChangeText={setCapacity} /></View>
         </View>
         <Field label="Description" placeholder="Condition, features, extras…" value={description} onChangeText={setDescription} multiline />
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm }}>
+          <Icon name="shield-check" size={20} color={colors.brand} />
+          <Display size={type.lg}>COMPLIANCE & SAFETY</Display>
+        </View>
+        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Required — a rig cannot go live without a valid DOT number and active insurance.</Txt>
+        <View style={{ flexDirection: "row", gap: spacing.md }}>
+          <View style={{ flex: 1 }}><Field label="DOT number" placeholder="DOT-123456" value={dot} onChangeText={setDot} testID="input-dot" /></View>
+          <View style={{ flex: 1 }}><Field label="MC number" placeholder="MC-654321" value={mc} onChangeText={setMc} /></View>
+        </View>
+        <View style={{ flexDirection: "row", gap: spacing.md }}>
+          <View style={{ flex: 1 }}><Field label="VIN" placeholder="1FUJA6..." autoCapitalize="characters" value={vin} onChangeText={setVin} /></View>
+          <View style={{ flex: 1 }}><Field label="Plate" placeholder="TX-RIG100" autoCapitalize="characters" value={plate} onChangeText={setPlate} /></View>
+        </View>
+        <Field label="Insurance provider" placeholder="e.g. Progressive Commercial" value={insProvider} onChangeText={setInsProvider} testID="input-ins-provider" />
+        <View style={{ flexDirection: "row", gap: spacing.md }}>
+          <View style={{ flex: 1 }}><Field label="Policy #" placeholder="POL-000123" value={insPolicy} onChangeText={setInsPolicy} testID="input-ins-policy" /></View>
+          <View style={{ flex: 1 }}><Field label="Insurance expiry" placeholder="YYYY-MM-DD" value={insExpiry} onChangeText={setInsExpiry} testID="input-ins-expiry" /></View>
+        </View>
 
         {error ? <Txt color={colors.error} size={type.sm}>{error}</Txt> : null}
         <Btn title="Publish Listing" icon="check" onPress={submit} loading={busy} testID="publish-btn" />

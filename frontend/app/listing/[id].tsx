@@ -59,6 +59,11 @@ export default function ListingDetail() {
   const ownerEarn = +(subtotal - appCut).toFixed(2);
 
   const needsVerify = user?.role === "renter" && !user?.license_verified;
+  const insExpired = (() => {
+    if (!listing.insurance_expiry) return null;
+    const d = new Date(listing.insurance_expiry);
+    return isFinite(d.getTime()) ? d < new Date() : null;
+  })();
 
   const book = async () => {
     if (needsVerify) {
@@ -151,6 +156,23 @@ export default function ListingDetail() {
 
           {listing.description ? <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22 }}>{listing.description}</Txt> : null}
           <Txt size={type.sm} color={colors.onSurfaceSecondary}>Owner · {listing.owner_name}</Txt>
+
+          {listing.dot_number ? (
+            <Card style={{ gap: spacing.md }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Icon name="shield-check" size={18} color={colors.success} />
+                  <Display size={type.lg}>COMPLIANCE</Display>
+                </View>
+                <Badge label={insExpired ? "Insurance Expired" : "Road Legal"} tone={insExpired ? "error" : "success"} />
+              </View>
+              <SplitRow label="DOT number" value={listing.dot_number} />
+              {listing.mc_number ? <SplitRow label="MC number" value={listing.mc_number} /> : null}
+              <SplitRow label="Insurance" value={listing.insurance_provider} />
+              <SplitRow label="Policy #" value={listing.insurance_policy} />
+              <SplitRow label="Insured through" value={listing.insurance_expiry} tone={insExpired ? "brand" : "success"} />
+            </Card>
+          ) : null}
 
           {!isOwner && (
             <>

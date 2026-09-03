@@ -5,6 +5,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState, Badge } from "@/src/ui";
+import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
@@ -25,9 +26,12 @@ export default function Trips() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Your bookings</Txt>
-        <Display size={type.xxl}>MY TRIPS</Display>
+      <View style={[styles.header, { paddingTop: insets.top + spacing.sm, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }]}>
+        <View>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary}>Your bookings</Txt>
+          <Display size={type.xxl}>MY TRIPS</Display>
+        </View>
+        <NotificationBell />
       </View>
       {loading ? <Loader /> : (
         <FlatList

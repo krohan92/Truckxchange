@@ -111,6 +111,14 @@ class ListingIn(BaseModel):
     capacity: Optional[str] = None
     description: Optional[str] = ""
     photos: List[str] = []
+    # Compliance / safety (required so no rig runs out of compliance)
+    dot_number: str
+    mc_number: Optional[str] = ""
+    vin: Optional[str] = ""
+    plate: Optional[str] = ""
+    insurance_provider: str
+    insurance_policy: str
+    insurance_expiry: str  # YYYY-MM-DD
 
 
 class BookingIn(BaseModel):
@@ -215,6 +223,21 @@ async def get_settings() -> dict:
         s = {"id": "global", "commission_rate": 0.15}
         await db.settings.insert_one(dict(s))
     return s
+
+
+async def notify(user_id: str, title: str, body: str, ntype: str, data: Optional[dict] = None):
+    """Create an in-app notification. Push delivery can be layered on later."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "title": title,
+        "body": body,
+        "type": ntype,
+        "data": data or {},
+        "read": False,
+        "created_at": now_iso(),
+    }
+    await db.notifications.insert_one(dict(doc))
 
 
 # --------------------------------------------------------- AI verification ---
@@ -422,6 +445,10 @@ async def files(path: str, token: Optional[str] = Query(None)):
 # =============================================================== LISTINGS =====
 @api.post("/listings")
 async def create_listing(data: ListingIn, user: dict = Depends(require("owner", "admin"))):
+    if not data.dot_number.strip() or not data.insurance_provider.strip() or not data.insurance_policy.strip() or not data.insurance_expiry.strip():
+        raise HTTPException(status_code=400, detail="DOT number and insurance details are required for compliance.")
+    if compute_expired(data.insurance_expiry) is True:
+        raise HTTPException(status_code=400, detail="Insurance is expired. Update your policy before listing this rig.")
     listing = {
         "id": str(uuid.uuid4()),
         "owner_id": user["id"],
@@ -505,6 +532,13 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     }
     await db.bookings.insert_one(dict(booking))
     booking.pop("_id", None)
+    await notify(
+        listing["owner_id"],
+        "New booking request",
+        f"{user['name']} wants to book {listing['title']} for {data.days} days.",
+        "booking_requested",
+        {"booking_id": booking["id"]},
+    )
     return booking
 
 
@@ -536,6 +570,15 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
     if data.status in ("approved", "declined") and user["id"] != item["owner_id"]:
         raise HTTPException(status_code=403, detail="Only the owner can approve or decline")
     await db.bookings.update_one({"id": bid}, {"$set": {"status": data.status}})
+    title = item["listing_title"]
+    if data.status == "approved":
+        await notify(item["renter_id"], "Booking approved", f"Your booking for {title} was approved. Get ready to roll!", "booking_approved", {"booking_id": bid})
+    elif data.status == "declined":
+        await notify(item["renter_id"], "Booking declined", f"Your booking for {title} was declined.", "booking_declined", {"booking_id": bid})
+    elif data.status == "active":
+        await notify(item["owner_id"], "Rig picked up", f"{item['renter_name']} picked up {title}. The trip has started.", "trip_started", {"booking_id": bid})
+    elif data.status == "completed":
+        await notify(item["renter_id"], "Trip completed", f"Your trip with {title} is complete. Safe travels!", "trip_completed", {"booking_id": bid})
     return {"ok": True, "status": data.status}
 
 
@@ -560,6 +603,31 @@ async def settings_get():
 async def settings_set(data: SettingsIn, user: dict = Depends(require("admin"))):
     await db.settings.update_one({"id": "global"}, {"$set": {"commission_rate": data.commission_rate}}, upsert=True)
     return {"commission_rate": data.commission_rate}
+
+
+# ========================================================= NOTIFICATIONS ======
+@api.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)):
+    items = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.get("/notifications/unread-count")
+async def unread_count(user: dict = Depends(get_current_user)):
+    n = await db.notifications.count_documents({"user_id": user["id"], "read": False})
+    return {"count": n}
+
+
+@api.post("/notifications/{nid}/read")
+async def mark_read(nid: str, user: dict = Depends(get_current_user)):
+    await db.notifications.update_one({"id": nid, "user_id": user["id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def mark_all_read(user: dict = Depends(get_current_user)):
+    await db.notifications.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"ok": True}
 
 
 # ========================================================= ROADSIDE / BIDS ====
@@ -619,6 +687,13 @@ async def create_bid(rid: str, data: BidIn, user: dict = Depends(require("vendor
     }
     await db.bids.insert_one(dict(bid))
     bid.pop("_id", None)
+    await notify(
+        req["poster_id"],
+        "New bid received",
+        f"{user['name']} bid ${data.price:g} on {req['title']} (ETA {data.eta}).",
+        "bid_received",
+        {"request_id": rid},
+    )
     return bid
 
 
@@ -633,6 +708,13 @@ async def accept_bid(rid: str, data: AcceptBidIn, user: dict = Depends(get_curre
     await db.requests.update_one({"id": rid}, {"$set": {"status": "awarded", "accepted_bid_id": data.bid_id}})
     await db.bids.update_one({"id": data.bid_id}, {"$set": {"status": "accepted"}})
     await db.bids.update_many({"request_id": rid, "id": {"$ne": data.bid_id}}, {"$set": {"status": "rejected"}})
+    await notify(
+        bid["vendor_id"],
+        "Your bid was accepted",
+        f"You won the job: {req['title']}. Contact the poster to proceed.",
+        "bid_accepted",
+        {"request_id": rid},
+    )
     return {"ok": True}
 
 
@@ -716,12 +798,19 @@ async def seed():
                 "photos": ["https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
             },
         ]
-        for d in demo:
+        for i, d in enumerate(demo):
             await db.listings.insert_one({
                 "id": str(uuid.uuid4()),
                 "owner_id": owner["id"],
                 "owner_name": owner["name"],
                 **d,
+                "dot_number": f"DOT-{3900000 + i * 137}",
+                "mc_number": f"MC-{800000 + i * 91}",
+                "vin": f"1FUJA6CG{i}7LME0000{i}",
+                "plate": f"TX-RIG{i}00",
+                "insurance_provider": ["Progressive Commercial", "Sentry", "Nationwide", "Great West"][i % 4],
+                "insurance_policy": f"POL-{20260000 + i}",
+                "insurance_expiry": "2027-03-31",
                 "active": True,
                 "deleted_at": None,
                 "created_at": now_iso(),

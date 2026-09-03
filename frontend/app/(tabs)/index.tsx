@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Field, Chip, Icon, Loader, EmptyState, Badge } from "@/src/ui";
+import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
 
 const CATS = ["All", "Semi", "Box", "Flatbed", "Reefer", "Dry Van", "Lowboy"];
@@ -85,7 +86,7 @@ export default function Market() {
             <Txt size={type.sm} color={colors.onSurfaceSecondary}>Find your next</Txt>
             <Display size={type.xxl}>RIG MARKETPLACE</Display>
           </View>
-          <Icon name="tune-variant" size={22} color={colors.onSurface} />
+          <NotificationBell />
         </View>
         <Field placeholder="Search trucks & trailers" value={q} onChangeText={setQ} returnKeyType="search" onSubmitEditing={() => load(cat, q)} testID="search-input" />
         <ScrollView
