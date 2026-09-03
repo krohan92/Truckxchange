@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, StyleSheet, Pressable } from "react-native";
+import { View, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -23,19 +23,20 @@ export default function CreateListing() {
   const [make, setMake] = useState("");
   const [capacity, setCapacity] = useState("");
   const [description, setDescription] = useState("");
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const pickPhoto = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7 });
-    if (res.canceled || !res.assets?.[0]) return;
-    const a = res.assets[0];
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsMultipleSelection: true, selectionLimit: 6 });
+    if (res.canceled || !res.assets?.length) return;
     setUploading(true);
     try {
-      const path = await uploadFile(a.uri, a.fileName || "rig.jpg", a.mimeType || "image/jpeg");
-      setPhoto(path);
+      for (const a of res.assets) {
+        const path = await uploadFile(a.uri, a.fileName || "rig.jpg", a.mimeType || "image/jpeg");
+        setPhotos((p) => [...p, path]);
+      }
     } catch (e: any) { setError("Photo upload failed"); }
     finally { setUploading(false); }
   };
@@ -52,7 +53,7 @@ export default function CreateListing() {
           daily_rate: parseFloat(rate) || 0,
           year: year ? parseInt(year, 10) : null,
           make, capacity, description,
-          photos: photo ? [photo] : [],
+          photos,
         },
       });
       router.back();
@@ -68,16 +69,23 @@ export default function CreateListing() {
         <View style={{ width: 40 }} />
       </View>
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: insets.bottom + spacing.xxl }} showsVerticalScrollIndicator={false}>
-        <Pressable testID="pick-photo" onPress={pickPhoto} style={styles.photoBox}>
-          {photo ? (
-            <Image source={{ uri: fileUrl(photo) }} style={StyleSheet.absoluteFill} contentFit="cover" />
-          ) : (
-            <View style={{ alignItems: "center", gap: spacing.sm }}>
-              <Icon name={uploading ? "progress-upload" : "camera-plus"} size={40} color={colors.onSurfaceSecondary} />
-              <Txt color={colors.onSurfaceSecondary}>{uploading ? "Uploading…" : "Add a photo"}</Txt>
-            </View>
-          )}
-        </Pressable>
+        <View style={{ gap: spacing.sm }}>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium">Photos {photos.length ? `(${photos.length})` : ""}</Txt>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            {photos.map((p, i) => (
+              <View key={p} style={styles.thumbWrap}>
+                <Image source={{ uri: fileUrl(p) }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                <Pressable testID={`remove-photo-${i}`} onPress={() => setPhotos((arr) => arr.filter((x) => x !== p))} style={styles.removeThumb}>
+                  <Icon name="close" size={14} color={colors.onSurface} />
+                </Pressable>
+              </View>
+            ))}
+            <Pressable testID="pick-photo" onPress={pickPhoto} style={styles.addTile}>
+              <Icon name={uploading ? "progress-upload" : "camera-plus"} size={28} color={colors.onSurfaceSecondary} />
+              <Txt size={type.sm} color={colors.onSurfaceSecondary}>{uploading ? "Uploading…" : "Add"}</Txt>
+            </Pressable>
+          </ScrollView>
+        </View>
 
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           {(["truck", "trailer"] as const).map((k) => (
@@ -119,6 +127,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
   iconBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
   photoBox: { height: 180, borderRadius: radius.lg, borderWidth: 2, borderStyle: "dashed", borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  thumbWrap: { width: 110, height: 110, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary },
+  removeThumb: { position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: 12, backgroundColor: "rgba(15,15,18,0.7)", alignItems: "center", justifyContent: "center" },
+  addTile: { width: 110, height: 110, borderRadius: radius.md, borderWidth: 2, borderStyle: "dashed", borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", gap: 4 },
   kindBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   kindActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
 });

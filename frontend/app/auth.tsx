@@ -22,7 +22,7 @@ const ROLES = [
 export default function Auth() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { login, register } = useAuth();
+  const { login, register, loginAs } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [role, setRole] = useState("renter");
   const [name, setName] = useState("");
@@ -30,6 +30,20 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const quick = async (r: "renter" | "owner" | "vendor" | "admin") => {
+    setError("");
+    setBusy(true);
+    try {
+      await loginAs(r);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      router.replace("/(tabs)");
+    } catch (e: any) {
+      setError(e.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     setError("");
@@ -125,6 +139,25 @@ export default function Auth() {
         ) : null}
 
         <Btn title={mode === "login" ? "Sign In" : "Create Account"} onPress={submit} loading={busy} testID="submit-auth" />
+
+        <View style={styles.divider}>
+          <View style={styles.line} />
+          <Txt size={type.sm} color={colors.onSurfaceSecondary}>quick test access</Txt>
+          <View style={styles.line} />
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+          {[
+            { r: "renter", label: "Trucker", icon: "steering" },
+            { r: "owner", label: "Owner", icon: "truck" },
+            { r: "vendor", label: "Service Co.", icon: "wrench" },
+            { r: "admin", label: "Admin", icon: "shield-account" },
+          ].map((q) => (
+            <Pressable key={q.r} testID={`quick-${q.r}`} onPress={() => quick(q.r as any)} style={styles.quickBtn}>
+              <Icon name={q.icon} size={18} color={colors.brand} />
+              <Txt weight="bold" size={type.sm}>{q.label}</Txt>
+            </Pressable>
+          ))}
+        </View>
       </KeyboardAwareScrollView>
     </View>
   );
@@ -145,4 +178,10 @@ const styles = StyleSheet.create({
   },
   roleActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
   errorBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "rgba(239,68,68,0.1)", padding: spacing.md, borderRadius: radius.md },
+  divider: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.sm },
+  line: { flex: 1, height: 1, backgroundColor: colors.border },
+  quickBtn: {
+    flexGrow: 1, flexBasis: "47%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
+    paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
+  },
 });

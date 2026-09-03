@@ -2,7 +2,7 @@ import React, { useCallback, useState } from "react";
 import { View, StyleSheet, FlatList, ScrollView, Pressable, RefreshControl } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, Redirect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
@@ -46,6 +46,9 @@ export default function Market() {
     await load(cat, q);
     setRefreshing(false);
   };
+
+  if (user?.role === "owner") return <Redirect href="/(tabs)/dashboard" />;
+  if (user?.role === "vendor") return <Redirect href="/(tabs)/roadside" />;
 
   const renderCard = ({ item }: { item: Listing }) => (
     <Pressable testID={`listing-${item.id}`} onPress={() => router.push(`/listing/${item.id}`)} style={styles.card}>

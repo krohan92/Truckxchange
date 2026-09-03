@@ -42,23 +42,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (token) {
         const me = await apiFetch<User>("/auth/me");
         setUser(me);
-        setLoading(false);
-        return;
       }
     } catch {
       await clearToken();
-    }
-    // Sign-in temporarily disabled — auto-enter as a trucker for testing.
-    try {
-      const res = await apiFetch<{ token: string; user: User }>("/auth/login", {
-        method: "POST",
-        auth: false,
-        body: SEED.renter,
-      });
-      await setToken(res.token);
-      setUser(res.user);
-    } catch {}
-    finally {
+    } finally {
       setLoading(false);
     }
   }, []);

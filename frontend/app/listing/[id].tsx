@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, Dimensions } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Dimensions, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,6 +23,8 @@ export default function ListingDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [imgIdx, setImgIdx] = useState(0);
+  const [confirmed, setConfirmed] = useState<any>(null);
 
   const [days, setDays] = useState("3");
   const [startDate, setStartDate] = useState("");
@@ -83,7 +86,8 @@ export default function ListingDetail() {
           notes,
         },
       });
-      router.replace(`/booking/${b.id}`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setConfirmed(b);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -97,11 +101,27 @@ export default function ListingDetail() {
     <View style={styles.container}>
       <KeyboardAwareScrollView bottomOffset={90} contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <Image source={{ uri: fileUrl(listing.photos?.[0] || "") }} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient colors={["rgba(15,15,18,0.6)", "transparent", colors.surface]} style={StyleSheet.absoluteFill} />
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => setImgIdx(Math.round(e.nativeEvent.contentOffset.x / width))}
+          >
+            {(listing.photos?.length ? listing.photos : [""]).map((p: string, i: number) => (
+              <Image key={i} source={{ uri: fileUrl(p) }} style={{ width, height: 300 }} contentFit="cover" transition={200} />
+            ))}
+          </ScrollView>
+          <LinearGradient colors={["rgba(15,15,18,0.6)", "transparent", colors.surface]} style={StyleSheet.absoluteFill} pointerEvents="none" />
           <Pressable testID="back-btn" onPress={() => router.back()} style={[styles.backBtn, { top: insets.top + spacing.sm }]}>
             <Icon name="chevron-left" size={26} color={colors.onSurface} />
           </Pressable>
+          {listing.photos?.length > 1 ? (
+            <View style={styles.dots}>
+              {listing.photos.map((_: string, i: number) => (
+                <View key={i} style={[styles.dot, i === imgIdx && styles.dotActive]} />
+              ))}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.body}>
@@ -186,6 +206,29 @@ export default function ListingDetail() {
           </View>
         </KeyboardStickyView>
       )}
+
+      <Modal visible={!!confirmed} transparent animationType="fade" onRequestClose={() => setConfirmed(null)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <View style={styles.successCircle}>
+              <Icon name="check-decagram" size={44} color={colors.success} />
+            </View>
+            <Display size={type.huge} style={{ textAlign: "center" }}>BOOKING REQUESTED</Display>
+            <Txt color={colors.onSurfaceSecondary} style={{ textAlign: "center" }}>
+              Your request for {listing.title} is on its way to the owner.
+            </Txt>
+            {confirmed ? (
+              <View style={styles.modalSplit}>
+                <SplitRow label="Total" value={`$${confirmed.subtotal.toFixed(2)}`} />
+                <SplitRow label={`Owner earns (${Math.round((1 - confirmed.commission_rate) * 100)}%)`} value={`$${confirmed.owner_earnings.toFixed(2)}`} tone="success" />
+                <SplitRow label={`RigRent fee (${Math.round(confirmed.commission_rate * 100)}%)`} value={`$${confirmed.app_cut.toFixed(2)}`} tone="brand" />
+              </View>
+            ) : null}
+            <Btn title="View Booking" icon="arrow-right" onPress={() => { const id = confirmed.id; setConfirmed(null); router.replace(`/booking/${id}`); }} testID="view-booking-btn" />
+            <Btn title="Back to Marketplace" variant="ghost" onPress={() => { setConfirmed(null); router.replace("/(tabs)"); }} />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -204,6 +247,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   hero: { height: 300 },
   backBtn: { position: "absolute", left: spacing.lg, width: 40, height: 40, borderRadius: radius.pill, backgroundColor: "rgba(15,15,18,0.6)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
+  dots: { position: "absolute", bottom: spacing.xxl, alignSelf: "center", flexDirection: "row", gap: 6 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" },
+  dotActive: { backgroundColor: colors.brand, width: 18 },
   body: { padding: spacing.lg, gap: spacing.md, marginTop: -spacing.xxl },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   specGrid: { flexDirection: "row", gap: spacing.md },
@@ -215,4 +261,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingTop: spacing.md,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
   },
+  modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  modalCard: { width: "100%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.xl, gap: spacing.md, alignItems: "stretch" },
+  successCircle: { alignSelf: "center", width: 84, height: 84, borderRadius: 42, backgroundColor: "rgba(16,185,129,0.14)", alignItems: "center", justifyContent: "center" },
+  modalSplit: { backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, padding: spacing.lg, gap: spacing.sm },
 });
