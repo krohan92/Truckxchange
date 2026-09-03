@@ -1192,6 +1192,16 @@ async def accept_bid(rid: str, data: AcceptBidIn, user: dict = Depends(get_curre
 
 
 # ================================================================= ADMIN ======
+@api.post("/admin/reseed-listings")
+async def admin_reseed_listings(user: dict = Depends(require("admin"))):
+    """Wipes the demo listings and re-inserts them fresh from the current seed
+    data (e.g. after updating a demo listing's photos in code)."""
+    result = await db.listings.delete_many({})
+    await seed()
+    count = await db.listings.count_documents({})
+    return {"ok": True, "deleted": result.deleted_count, "reseeded": count}
+
+
 @api.get("/admin/verifications")
 async def admin_verifications(user: dict = Depends(require("admin"))):
     items = await db.verifications.find({}, {"_id": 0, "extracted": 1, "id": 1, "user_id": 1, "doc_type": 1, "status": 1, "expired": 1, "storage_path": 1, "admin_reviewed": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
