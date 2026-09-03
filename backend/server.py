@@ -10,7 +10,8 @@ from typing import List, Optional, Literal
 
 import jwt
 import requests
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query
+import stripe
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query, Request
 from fastapi.responses import Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -32,6 +33,11 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "rigrent-dev-secret-change-me")
 JWT_ALGO = "HS256"
 TOKEN_DAYS = 30
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://truckxchange-frontend.vercel.app")
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
@@ -133,6 +139,8 @@ class BookingReviewIn(BaseModel):
 class InspectionIn(BaseModel):
     phase: Literal["before", "after"]
     video_path: str
+    odometer: Optional[int] = None
+    fuel_level: Optional[Literal["full", "3/4", "1/2", "1/4", "empty"]] = None
 
 
 class RequestIn(BaseModel):
@@ -540,6 +548,16 @@ async def my_listings(user: dict = Depends(require("owner", "admin"))):
     return items
 
 
+@api.get("/listings/{lid}/availability")
+async def listing_availability(lid: str):
+    """Booked date ranges for this listing, so the frontend can grey out a calendar."""
+    cursor = db.bookings.find(
+        {"listing_id": lid, "status": {"$in": ["pending", "approved", "active"]}, "start_date": {"$ne": "TBD"}, "end_date": {"$ne": "TBD"}},
+        {"_id": 0, "start_date": 1, "end_date": 1, "status": 1},
+    )
+    return {"booked_ranges": await cursor.to_list(length=200)}
+
+
 @api.get("/listings/{lid}")
 async def get_listing(lid: str):
     item = await db.listings.find_one({"id": lid, "deleted_at": None}, {"_id": 0})
@@ -565,6 +583,22 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     listing = await db.listings.find_one({"id": data.listing_id, "deleted_at": None}, {"_id": 0})
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Prevent double-booking: reject if this listing already has a
+    # pending/approved/active booking whose dates overlap the requested range.
+    if data.start_date != "TBD" and data.end_date != "TBD":
+        conflict = await db.bookings.find_one({
+            "listing_id": data.listing_id,
+            "status": {"$in": ["pending", "approved", "active"]},
+            "start_date": {"$ne": "TBD", "$lt": data.end_date},
+            "end_date": {"$ne": "TBD", "$gt": data.start_date},
+        })
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This rig is already booked {conflict['start_date']} to {conflict['end_date']}. Pick different dates.",
+            )
+
     settings = await get_settings()
     rate = settings["commission_rate"]
     ppm = listing.get("price_per_mile") or 0
@@ -658,8 +692,35 @@ async def add_inspection(bid: str, data: InspectionIn, user: dict = Depends(get_
     item = await db.bookings.find_one({"id": bid})
     if not item or user["id"] not in (item["owner_id"], item["renter_id"]):
         raise HTTPException(status_code=404, detail="Booking not found")
-    entry = {"phase": data.phase, "video_path": data.video_path, "by": user["id"], "at": now_iso()}
+    entry = {
+        "phase": data.phase,
+        "video_path": data.video_path,
+        "odometer": data.odometer,
+        "fuel_level": data.fuel_level,
+        "by": user["id"],
+        "at": now_iso(),
+    }
     await db.bookings.update_one({"id": bid}, {"$push": {"inspections": entry}})
+
+    # Once both a "before" and "after" inspection exist with odometer readings,
+    # compute actual miles driven and flag if it exceeded the booking estimate.
+    fresh = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    inspections = fresh.get("inspections", [])
+    before = next((i for i in inspections if i["phase"] == "before" and i.get("odometer") is not None), None)
+    after = next((i for i in inspections if i["phase"] == "after" and i.get("odometer") is not None), None)
+    if before and after:
+        miles_driven = after["odometer"] - before["odometer"]
+        overage = max(0, miles_driven - fresh.get("estimated_miles", 0))
+        await db.bookings.update_one({"id": bid}, {"$set": {"miles_driven": miles_driven, "mileage_overage": overage}})
+        if overage > 0:
+            await notify(
+                fresh["owner_id"],
+                "Mileage overage",
+                f"{fresh['listing_title']} was driven {overage} mi over the estimate.",
+                "mileage_overage",
+                {"booking_id": bid},
+            )
+
     return {"ok": True, "inspection": entry}
 
 
@@ -710,6 +771,134 @@ async def listing_reviews(lid: str):
 
 
 # =============================================================== SETTINGS =====
+@api.post("/stripe/connect")
+async def stripe_connect_onboard(user: dict = Depends(require("owner", "vendor", "admin"))):
+    """Owners/vendors connect a Stripe Standard account to receive payouts."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments are not configured yet. Ask the admin to add STRIPE_SECRET_KEY.")
+
+    def _create():
+        acct_id = user.get("stripe_account_id")
+        if not acct_id:
+            acct = stripe.Account.create(type="standard", email=user.get("email"))
+            acct_id = acct.id
+        link = stripe.AccountLink.create(
+            account=acct_id,
+            refresh_url=f"{FRONTEND_URL}/profile",
+            return_url=f"{FRONTEND_URL}/profile",
+            type="account_onboarding",
+        )
+        return acct_id, link.url
+
+    try:
+        acct_id, url = await run_in_threadpool(_create)
+    except Exception as e:
+        logger.error(f"stripe connect failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start Stripe onboarding")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"stripe_account_id": acct_id}})
+    return {"onboarding_url": url}
+
+
+@api.get("/stripe/status")
+async def stripe_status(user: dict = Depends(get_current_user)):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    acct_id = fresh.get("stripe_account_id") if fresh else None
+    if not acct_id or not STRIPE_SECRET_KEY:
+        return {"connected": False, "charges_enabled": False}
+
+    def _fetch():
+        return stripe.Account.retrieve(acct_id)
+
+    try:
+        acct = await run_in_threadpool(_fetch)
+    except Exception as e:
+        logger.error(f"stripe status failed: {e}")
+        return {"connected": True, "charges_enabled": False}
+    return {"connected": True, "charges_enabled": bool(acct.get("charges_enabled"))}
+
+
+@api.post("/bookings/{bid}/pay")
+async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
+    """Renter pays for an owner-approved booking via Stripe Checkout. The
+    platform's commission is deducted automatically as a Connect application fee."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments are not configured yet")
+    booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    if not booking or booking["renter_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking["status"] != "approved":
+        raise HTTPException(status_code=400, detail="Booking must be approved by the owner before payment")
+
+    owner = await db.users.find_one({"id": booking["owner_id"]}, {"_id": 0})
+    owner_acct = owner.get("stripe_account_id") if owner else None
+    if not owner_acct:
+        raise HTTPException(status_code=400, detail="Owner hasn't connected a payout account yet")
+
+    subtotal_cents = int(round(booking["subtotal"] * 100))
+    app_cut_cents = int(round(booking["app_cut"] * 100))
+
+    def _create_session():
+        return stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": booking["listing_title"]},
+                    "unit_amount": subtotal_cents,
+                },
+                "quantity": 1,
+            }],
+            payment_intent_data={
+                "application_fee_amount": app_cut_cents,
+                "transfer_data": {"destination": owner_acct},
+            },
+            success_url=f"{FRONTEND_URL}/booking/{bid}?paid=1",
+            cancel_url=f"{FRONTEND_URL}/booking/{bid}",
+            metadata={"booking_id": bid},
+        )
+
+    try:
+        session = await run_in_threadpool(_create_session)
+    except Exception as e:
+        logger.error(f"stripe checkout failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start checkout")
+    return {"checkout_url": session.url}
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe calls this when a checkout session completes. Register this URL
+    (https://<your-railway-domain>/api/stripe/webhook) in the Stripe dashboard."""
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+
+    def _verify():
+        return stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+
+    try:
+        event = await run_in_threadpool(_verify)
+    except Exception as e:
+        logger.error(f"stripe webhook verify failed: {e}")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        bid = (session.get("metadata") or {}).get("booking_id")
+        if bid:
+            await db.bookings.update_one({"id": bid}, {"$set": {"status": "active", "paid": True, "paid_at": now_iso()}})
+            booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
+            if booking:
+                await notify(
+                    booking["owner_id"],
+                    "Payment received",
+                    f"Payment for {booking['listing_title']} is complete.",
+                    "payment_received",
+                    {"booking_id": bid},
+                )
+    return {"received": True}
+
+
 @api.get("/settings")
 async def settings_get():
     s = await get_settings()
