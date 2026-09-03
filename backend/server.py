@@ -105,7 +105,8 @@ class ListingIn(BaseModel):
     kind: Literal["truck", "trailer"]
     category: str  # Box, Flatbed, Reefer, Semi, Dry Van, Lowboy
     location: str
-    daily_rate: float
+    price_per_mile: float = Field(gt=0)
+    daily_rate: Optional[float] = 0
     year: Optional[int] = None
     make: Optional[str] = None
     capacity: Optional[str] = None
@@ -123,9 +124,9 @@ class ListingIn(BaseModel):
 
 class BookingIn(BaseModel):
     listing_id: str
-    start_date: str
-    end_date: str
-    days: int = Field(ge=1)
+    estimated_miles: int = Field(ge=1)
+    start_date: Optional[str] = "TBD"
+    end_date: Optional[str] = "TBD"
     load_type: str
     load_weight: Optional[str] = None
     pickup: str
@@ -135,6 +136,11 @@ class BookingIn(BaseModel):
 
 class BookingStatusIn(BaseModel):
     status: Literal["approved", "declined", "active", "completed", "cancelled"]
+
+
+class BookingReviewIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: Optional[str] = ""
 
 
 class InspectionIn(BaseModel):
@@ -454,6 +460,8 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
         "owner_id": user["id"],
         "owner_name": user["name"],
         **data.dict(),
+        "rating": 0,
+        "rating_count": 0,
         "active": True,
         "deleted_at": None,
         "created_at": now_iso(),
@@ -509,7 +517,8 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Listing not found")
     settings = await get_settings()
     rate = settings["commission_rate"]
-    subtotal = round(listing["daily_rate"] * data.days, 2)
+    ppm = listing.get("price_per_mile") or 0
+    subtotal = round(ppm * data.estimated_miles, 2)
     app_cut = round(subtotal * rate, 2)
     owner_earnings = round(subtotal - app_cut, 2)
 
@@ -522,11 +531,13 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         "renter_id": user["id"],
         "renter_name": user["name"],
         **data.dict(),
+        "price_per_mile": ppm,
         "subtotal": subtotal,
         "commission_rate": rate,
         "app_cut": app_cut,
         "owner_earnings": owner_earnings,
         "status": "pending",
+        "reviewed": False,
         "inspections": [],
         "created_at": now_iso(),
     }
@@ -535,17 +546,25 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     await notify(
         listing["owner_id"],
         "New booking request",
-        f"{user['name']} wants to book {listing['title']} for {data.days} days.",
+        f"{user['name']} wants to book {listing['title']} (~{data.estimated_miles:,} mi).",
         "booking_requested",
         {"booking_id": booking["id"]},
     )
     return booking
 
 
+def strip_fee(b: dict) -> dict:
+    """Renters never see the platform cut — only the total they pay."""
+    b.pop("app_cut", None)
+    b.pop("commission_rate", None)
+    b.pop("owner_earnings", None)
+    return b
+
+
 @api.get("/bookings/mine")
 async def my_bookings(user: dict = Depends(get_current_user)):
     items = await db.bookings.find({"renter_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return items
+    return [strip_fee(b) for b in items]
 
 
 @api.get("/bookings/incoming")
@@ -559,6 +578,8 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user)):
     item = await db.bookings.find_one({"id": bid}, {"_id": 0})
     if not item or user["id"] not in (item["owner_id"], item["renter_id"]):
         raise HTTPException(status_code=404, detail="Booking not found")
+    if user["id"] == item["renter_id"] and user["role"] != "admin":
+        item = strip_fee(item)
     return item
 
 
@@ -590,6 +611,52 @@ async def add_inspection(bid: str, data: InspectionIn, user: dict = Depends(get_
     entry = {"phase": data.phase, "video_path": data.video_path, "by": user["id"], "at": now_iso()}
     await db.bookings.update_one({"id": bid}, {"$push": {"inspections": entry}})
     return {"ok": True, "inspection": entry}
+
+
+@api.post("/bookings/{bid}/review")
+async def review_booking(bid: str, data: BookingReviewIn, user: dict = Depends(get_current_user)):
+    item = await db.bookings.find_one({"id": bid})
+    if not item or item["renter_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if item["status"] != "completed":
+        raise HTTPException(status_code=400, detail="You can leave a review once the trip is completed")
+    if item.get("reviewed"):
+        raise HTTPException(status_code=400, detail="You already reviewed this trip")
+    review = {
+        "id": str(uuid.uuid4()),
+        "listing_id": item["listing_id"],
+        "booking_id": bid,
+        "renter_id": user["id"],
+        "renter_name": user["name"],
+        "rating": data.rating,
+        "comment": data.comment,
+        "created_at": now_iso(),
+    }
+    await db.reviews.insert_one(dict(review))
+    await db.bookings.update_one({"id": bid}, {"$set": {"reviewed": True}})
+
+    listing = await db.listings.find_one({"id": item["listing_id"]})
+    if listing:
+        old_count = listing.get("rating_count", 0)
+        old_avg = listing.get("rating", 0)
+        new_count = old_count + 1
+        new_avg = round((old_avg * old_count + data.rating) / new_count, 2)
+        await db.listings.update_one({"id": item["listing_id"]}, {"$set": {"rating": new_avg, "rating_count": new_count}})
+        await notify(
+            listing["owner_id"],
+            "New review",
+            f"{user['name']} rated {listing['title']} {data.rating}/5.",
+            "review_received",
+            {"listing_id": listing["id"]},
+        )
+    review.pop("_id", None)
+    return review
+
+
+@api.get("/listings/{lid}/reviews")
+async def listing_reviews(lid: str):
+    items = await db.reviews.find({"listing_id": lid}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
 
 
 # =============================================================== SETTINGS =====
@@ -798,12 +865,16 @@ async def seed():
                 "photos": ["https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
             },
         ]
+        ppm_list = [2.20, 1.90, 1.75, 1.40]
         for i, d in enumerate(demo):
             await db.listings.insert_one({
                 "id": str(uuid.uuid4()),
                 "owner_id": owner["id"],
                 "owner_name": owner["name"],
                 **d,
+                "price_per_mile": ppm_list[i % len(ppm_list)],
+                "rating": 0,
+                "rating_count": 0,
                 "dot_number": f"DOT-{3900000 + i * 137}",
                 "mc_number": f"MC-{800000 + i * 91}",
                 "vin": f"1FUJA6CG{i}7LME0000{i}",

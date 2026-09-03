@@ -34,7 +34,10 @@ Build a truck & trailer rental marketplace (like Turo). Truckers submit a driver
 - Roadside bidding: post requests, vendors bid, poster accepts cheapest.
 - Inspection before/after video upload via object storage.
 - Admin: verification review + commission-rate stepper.
-- **In-app notifications**: inbox screen + bell with unread badge on all main headers. Events: booking requested, approved, declined, rig picked up (trip started), trip completed, bid received, bid accepted. (Real push deferred — user will add google-services.json later.)
+- **In-app notifications**: inbox screen + bell with unread badge on all main headers. Events: booking requested, approved, declined, rig picked up (trip started), trip completed, bid received, bid accepted, review received.
+- **Per-mile pricing**: owners set price per mile; renters enter estimated miles; cost = miles × rate. Days removed. (Actual miles to reconcile via ELD after native build.)
+- **Fee hidden from renters**: renters only see the trip total; `app_cut`/`commission_rate`/`owner_earnings` stripped from renter API responses. Owner sees their payout; only admin sees the platform fee.
+- **Reviews & ratings**: renter rates a completed trip (1-5 + comment); average rating shown on marketplace cards and listing detail; owner notified.
 
 ## Backlog
 - P1: Real phone push (Emergent-managed) once user provides google-services.json (package com.emergent.fleetrentcheck.vpnmy2). Notification write points already centralized in `notify()`.

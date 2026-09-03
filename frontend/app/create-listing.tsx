@@ -50,7 +50,7 @@ export default function CreateListing() {
 
   const submit = async () => {
     setError("");
-    if (!title.trim() || !location.trim() || !rate) { setError("Title, location and daily rate are required"); return; }
+    if (!title.trim() || !location.trim() || !rate) { setError("Title, location and price per mile are required"); return; }
     if (!dot.trim() || !insProvider.trim() || !insPolicy.trim() || !insExpiry.trim()) {
       setError("DOT number and insurance details are required for compliance");
       return;
@@ -61,7 +61,7 @@ export default function CreateListing() {
         method: "POST",
         body: {
           title, kind, category, location,
-          daily_rate: parseFloat(rate) || 0,
+          price_per_mile: parseFloat(rate) || 0,
           year: year ? parseInt(year, 10) : null,
           make, capacity, description,
           photos,
@@ -118,7 +118,7 @@ export default function CreateListing() {
 
         <Field label="Title" placeholder="e.g. Freightliner Cascadia Sleeper" value={title} onChangeText={setTitle} testID="input-title" />
         <View style={{ flexDirection: "row", gap: spacing.md }}>
-          <View style={{ flex: 1 }}><Field label="Daily rate ($)" placeholder="320" keyboardType="number-pad" value={rate} onChangeText={setRate} testID="input-rate" /></View>
+          <View style={{ flex: 1 }}><Field label="Price / mile ($)" placeholder="2.20" keyboardType="decimal-pad" value={rate} onChangeText={setRate} testID="input-rate" /></View>
           <View style={{ flex: 1 }}><Field label="Year" placeholder="2022" keyboardType="number-pad" value={year} onChangeText={setYear} /></View>
         </View>
         <Field label="Location" placeholder="City, State" value={location} onChangeText={setLocation} testID="input-location" />

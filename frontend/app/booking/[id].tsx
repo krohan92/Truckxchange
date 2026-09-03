@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, uploadFile } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
-import { Txt, Display, Icon, Loader, Badge, Card, Btn } from "@/src/ui";
+import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
@@ -18,6 +18,9 @@ export default function BookingDetail() {
   const [b, setB] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [stars, setStars] = useState(5);
+  const [comment, setComment] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
 
   const load = useCallback(async () => {
     const data = await apiFetch<any>(`/bookings/${id}`);
@@ -47,6 +50,15 @@ export default function BookingDetail() {
     await load();
   };
 
+  const submitReview = async () => {
+    setReviewBusy(true);
+    try {
+      await apiFetch(`/bookings/${id}/review`, { method: "POST", body: { rating: stars, comment } });
+      await load();
+    } catch {}
+    finally { setReviewBusy(false); }
+  };
+
   const hasPhase = (p: string) => b.inspections?.some((i: any) => i.phase === p);
 
   return (
@@ -64,19 +76,23 @@ export default function BookingDetail() {
 
         <Card style={{ gap: spacing.sm }}>
           <Row label="Route" value={`${b.pickup} → ${b.dropoff}`} />
-          <Row label="Dates" value={`${b.start_date} – ${b.end_date} (${b.days} days)`} />
+          <Row label="Distance" value={`~${(b.estimated_miles || 0).toLocaleString()} mi`} />
+          {b.start_date && b.start_date !== "TBD" ? <Row label="Dates" value={`${b.start_date} – ${b.end_date}`} /> : null}
           <Row label="Load" value={b.load_type + (b.load_weight ? ` · ${b.load_weight}` : "")} />
           {b.notes ? <Row label="Notes" value={b.notes} /> : null}
         </Card>
 
         <Card style={{ gap: spacing.md }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Icon name="chart-donut" size={18} color={colors.brand} />
-            <Display size={type.lg}>PAYMENT SPLIT</Display>
+            <Icon name="cash" size={18} color={colors.brand} />
+            <Display size={type.lg}>{isOwner ? "YOUR PAYOUT" : "TRIP COST"}</Display>
           </View>
-          <Row label="Subtotal" value={`$${b.subtotal}`} />
-          <Row label={`Owner earnings (${Math.round((1 - b.commission_rate) * 100)}%)`} value={`$${b.owner_earnings}`} tone={colors.success} />
-          <Row label={`RigRent fee (${Math.round(b.commission_rate * 100)}%)`} value={`$${b.app_cut}`} tone={colors.brand} />
+          <Row label={`${(b.estimated_miles || 0).toLocaleString()} mi × $${(b.price_per_mile || 0).toFixed(2)}/mi`} value={`$${b.subtotal}`} />
+          {isOwner ? (
+            <Row label="You earn" value={`$${b.owner_earnings}`} tone={colors.success} />
+          ) : (
+            <Row label="Estimated total" value={`$${b.subtotal}`} tone={colors.brand} />
+          )}
         </Card>
 
         <Card style={{ gap: spacing.md }}>
@@ -102,6 +118,30 @@ export default function BookingDetail() {
             ))}
           </View>
         </Card>
+
+        {!isOwner && b.status === "completed" && (
+          <Card style={{ gap: spacing.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="star-outline" size={18} color={colors.brand} />
+              <Display size={type.lg}>RATE THIS RIG</Display>
+            </View>
+            {b.reviewed ? (
+              <Txt color={colors.success} weight="bold">Thanks — your review has been submitted.</Txt>
+            ) : (
+              <>
+                <View style={{ flexDirection: "row", gap: spacing.sm, justifyContent: "center" }}>
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Pressable key={s} testID={`star-${s}`} onPress={() => setStars(s)} hitSlop={6}>
+                      <Icon name={s <= stars ? "star" : "star-outline"} size={34} color={colors.warning} />
+                    </Pressable>
+                  ))}
+                </View>
+                <Field label="Comment (optional)" placeholder="How was the truck & the owner?" value={comment} onChangeText={setComment} multiline testID="review-comment" />
+                <Btn title="Submit Review" icon="send" onPress={submitReview} loading={reviewBusy} testID="submit-review-btn" />
+              </>
+            )}
+          </Card>
+        )}
 
         {isOwner && b.status === "pending" && (
           <View style={{ flexDirection: "row", gap: spacing.md }}>

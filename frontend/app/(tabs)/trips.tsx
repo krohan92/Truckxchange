@@ -48,7 +48,7 @@ export default function Trips() {
                 <Txt size={type.sm} color={colors.onSurfaceSecondary} numberOfLines={1}>{item.pickup} → {item.dropoff}</Txt>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <Badge label={item.status} tone={STATUS_TONE[item.status]} />
-                  <Txt size={type.sm} color={colors.onSurfaceSecondary}>{item.days} days · ${item.subtotal}</Txt>
+                  <Txt size={type.sm} color={colors.onSurfaceSecondary}>~{(item.estimated_miles || 0).toLocaleString()} mi · ${item.subtotal}</Txt>
                 </View>
               </View>
               <Icon name="chevron-right" size={22} color={colors.onSurfaceSecondary} />

@@ -14,7 +14,8 @@ const CATS = ["All", "Semi", "Box", "Flatbed", "Reefer", "Dry Van", "Lowboy"];
 
 type Listing = {
   id: string; title: string; kind: string; category: string; location: string;
-  daily_rate: number; year?: number; make?: string; capacity?: string; photos: string[];
+  price_per_mile: number; year?: number; make?: string; capacity?: string; photos: string[];
+  rating?: number; rating_count?: number;
 };
 
 export default function Market() {
@@ -57,7 +58,15 @@ export default function Market() {
       <LinearGradient colors={["transparent", "rgba(15,15,18,0.95)"]} style={styles.cardScrim} />
       <View style={styles.cardTopRow}>
         <Badge label={item.kind} tone="muted" />
-        <Badge label={item.category} tone="brand" />
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          {item.rating_count ? (
+            <View style={styles.ratingPill}>
+              <Icon name="star" size={12} color={colors.warning} />
+              <Txt size={type.sm} weight="bold">{item.rating?.toFixed(1)}</Txt>
+            </View>
+          ) : null}
+          <Badge label={item.category} tone="brand" />
+        </View>
       </View>
       <View style={styles.cardBottom}>
         <Display size={type.xl} numberOfLines={1}>{item.title}</Display>
@@ -72,7 +81,7 @@ export default function Market() {
           ) : null}
         </View>
         <View style={styles.priceTag}>
-          <Text2 rate={item.daily_rate} />
+          <Text2 rate={item.price_per_mile} />
         </View>
       </View>
     </Pressable>
@@ -121,8 +130,8 @@ export default function Market() {
 function Text2({ rate }: { rate: number }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "baseline", gap: 2 }}>
-      <Display size={type.xl} color={colors.brand}>${rate}</Display>
-      <Txt size={type.sm} color={colors.onSurfaceSecondary}>/day</Txt>
+      <Display size={type.xl} color={colors.brand}>${rate?.toFixed(2)}</Display>
+      <Txt size={type.sm} color={colors.onSurfaceSecondary}>/mi</Txt>
     </View>
   );
 }
@@ -146,4 +155,5 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,15,18,0.7)", borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     borderWidth: 1, borderColor: colors.borderStrong,
   },
+  ratingPill: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "rgba(15,15,18,0.7)", borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 4 },
 });

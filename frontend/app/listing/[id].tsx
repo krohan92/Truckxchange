@@ -19,14 +19,14 @@ export default function ListingDetail() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [listing, setListing] = useState<any>(null);
-  const [rate, setRate] = useState(0.15);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [imgIdx, setImgIdx] = useState(0);
   const [confirmed, setConfirmed] = useState<any>(null);
+  const [reviews, setReviews] = useState<any[]>([]);
 
-  const [days, setDays] = useState("3");
+  const [miles, setMiles] = useState("250");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [loadType, setLoadType] = useState("");
@@ -40,11 +40,11 @@ export default function ListingDetail() {
       setLoading(true);
       Promise.all([
         apiFetch(`/listings/${id}`, { auth: false }),
-        apiFetch(`/settings`, { auth: false }),
+        apiFetch(`/listings/${id}/reviews`, { auth: false }),
       ])
-        .then(([l, s]: any) => {
+        .then(([l, r]: any) => {
           setListing(l);
-          setRate(s.commission_rate);
+          setReviews(r);
         })
         .finally(() => setLoading(false));
     }, [id])
@@ -53,10 +53,9 @@ export default function ListingDetail() {
   if (loading) return <Loader />;
   if (!listing) return null;
 
-  const nDays = Math.max(1, parseInt(days || "1", 10) || 1);
-  const subtotal = listing.daily_rate * nDays;
-  const appCut = +(subtotal * rate).toFixed(2);
-  const ownerEarn = +(subtotal - appCut).toFixed(2);
+  const nMiles = Math.max(1, parseInt(miles || "1", 10) || 1);
+  const ppm = listing.price_per_mile || 0;
+  const subtotal = +(ppm * nMiles).toFixed(2);
 
   const needsVerify = user?.role === "renter" && !user?.license_verified;
   const insExpired = (() => {
@@ -81,9 +80,9 @@ export default function ListingDetail() {
         method: "POST",
         body: {
           listing_id: listing.id,
+          estimated_miles: nMiles,
           start_date: startDate || "TBD",
           end_date: endDate || "TBD",
-          days: nDays,
           load_type: loadType,
           load_weight: loadWeight,
           pickup,
@@ -157,6 +156,24 @@ export default function ListingDetail() {
           {listing.description ? <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22 }}>{listing.description}</Txt> : null}
           <Txt size={type.sm} color={colors.onSurfaceSecondary}>Owner · {listing.owner_name}</Txt>
 
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4 }}>
+              <Display size={type.huge} color={colors.brand}>${ppm.toFixed(2)}</Display>
+              <Txt color={colors.onSurfaceSecondary}>per mile</Txt>
+            </View>
+            {listing.rating_count ? (
+              <View style={{ alignItems: "flex-end" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Icon name="star" size={18} color={colors.warning} />
+                  <Display size={type.xl}>{listing.rating?.toFixed(1)}</Display>
+                </View>
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>{listing.rating_count} review{listing.rating_count === 1 ? "" : "s"}</Txt>
+              </View>
+            ) : (
+              <Txt size={type.sm} color={colors.onSurfaceSecondary}>No reviews yet</Txt>
+            )}
+          </View>
+
           {listing.dot_number ? (
             <Card style={{ gap: spacing.md }}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -176,12 +193,12 @@ export default function ListingDetail() {
 
           {!isOwner && (
             <>
-              <Display size={type.xl} style={{ marginTop: spacing.md }}>LOAD DETAILS</Display>
+              <Display size={type.xl} style={{ marginTop: spacing.md }}>TRIP DETAILS</Display>
               <View style={{ gap: spacing.md }}>
+                <Field label="Estimated miles" placeholder="e.g. 850" keyboardType="number-pad" value={miles} onChangeText={setMiles} testID="input-miles" />
                 <View style={{ flexDirection: "row", gap: spacing.md }}>
-                  <View style={{ flex: 1 }}><Field label="Days" keyboardType="number-pad" value={days} onChangeText={setDays} testID="input-days" /></View>
-                  <View style={{ flex: 1 }}><Field label="Start" placeholder="Jun 12" value={startDate} onChangeText={setStartDate} /></View>
-                  <View style={{ flex: 1 }}><Field label="End" placeholder="Jun 15" value={endDate} onChangeText={setEndDate} /></View>
+                  <View style={{ flex: 1 }}><Field label="Start (optional)" placeholder="Jun 12" value={startDate} onChangeText={setStartDate} /></View>
+                  <View style={{ flex: 1 }}><Field label="End (optional)" placeholder="Jun 15" value={endDate} onChangeText={setEndDate} /></View>
                 </View>
                 <Field label="Load type" placeholder="e.g. Steel coils, produce" value={loadType} onChangeText={setLoadType} testID="input-loadtype" />
                 <Field label="Load weight (optional)" placeholder="e.g. 38,000 lb" value={loadWeight} onChangeText={setLoadWeight} />
@@ -192,21 +209,35 @@ export default function ListingDetail() {
 
               <Card style={{ gap: spacing.md, marginTop: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Icon name="chart-donut" size={18} color={colors.brand} />
-                  <Display size={type.lg}>COMMISSION SPLIT</Display>
+                  <Icon name="calculator-variant" size={18} color={colors.brand} />
+                  <Display size={type.lg}>ESTIMATED COST</Display>
                 </View>
-                <SplitRow label={`Subtotal (${nDays} days × $${listing.daily_rate})`} value={`$${subtotal.toFixed(2)}`} />
-                <View style={styles.splitBar}>
-                  <View style={[styles.barOwner, { flex: 1 - rate }]} />
-                  <View style={[styles.barApp, { flex: rate }]} />
-                </View>
-                <SplitRow label={`Owner earnings (${Math.round((1 - rate) * 100)}%)`} value={`$${ownerEarn.toFixed(2)}`} tone="success" />
-                <SplitRow label={`RigRent fee (${Math.round(rate * 100)}%)`} value={`$${appCut.toFixed(2)}`} tone="brand" />
+                <SplitRow label={`${nMiles.toLocaleString()} mi × $${ppm.toFixed(2)}/mi`} value={`$${subtotal.toFixed(2)}`} />
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>Final total is based on actual miles driven, logged via ELD at drop-off.</Txt>
               </Card>
 
               {error ? <Txt color={colors.error} size={type.sm}>{error}</Txt> : null}
             </>
           )}
+
+          {reviews.length > 0 ? (
+            <View style={{ gap: spacing.md, marginTop: spacing.md }}>
+              <Display size={type.xl}>REVIEWS</Display>
+              {reviews.map((rv) => (
+                <Card key={rv.id} style={{ gap: 6 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Txt weight="bold">{rv.renter_name}</Txt>
+                    <View style={{ flexDirection: "row", gap: 2 }}>
+                      {[1, 2, 3, 4, 5].map((s) => (
+                        <Icon key={s} name={s <= rv.rating ? "star" : "star-outline"} size={14} color={colors.warning} />
+                      ))}
+                    </View>
+                  </View>
+                  {rv.comment ? <Txt size={type.sm} color={colors.onSurfaceTertiary}>{rv.comment}</Txt> : null}
+                </Card>
+              ))}
+            </View>
+          ) : null}
         </View>
       </KeyboardAwareScrollView>
 
@@ -241,9 +272,8 @@ export default function ListingDetail() {
             </Txt>
             {confirmed ? (
               <View style={styles.modalSplit}>
-                <SplitRow label="Total" value={`$${confirmed.subtotal.toFixed(2)}`} />
-                <SplitRow label={`Owner earns (${Math.round((1 - confirmed.commission_rate) * 100)}%)`} value={`$${confirmed.owner_earnings.toFixed(2)}`} tone="success" />
-                <SplitRow label={`RigRent fee (${Math.round(confirmed.commission_rate * 100)}%)`} value={`$${confirmed.app_cut.toFixed(2)}`} tone="brand" />
+                <SplitRow label={`${confirmed.estimated_miles?.toLocaleString?.() ?? confirmed.estimated_miles} mi × $${(confirmed.price_per_mile || 0).toFixed(2)}/mi`} value={`$${confirmed.subtotal.toFixed(2)}`} />
+                <SplitRow label="Estimated total" value={`$${confirmed.subtotal.toFixed(2)}`} tone="brand" />
               </View>
             ) : null}
             <Btn title="View Booking" icon="arrow-right" onPress={() => { const id = confirmed.id; setConfirmed(null); router.replace(`/booking/${id}`); }} testID="view-booking-btn" />

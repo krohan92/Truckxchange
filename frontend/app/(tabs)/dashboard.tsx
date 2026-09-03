@@ -74,7 +74,7 @@ export default function Dashboard() {
                 <Badge label={b.status} tone={STATUS_TONE[b.status]} />
               </View>
               <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.renter_name} · {b.load_type}</Txt>
-              <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.pickup} → {b.dropoff} · {b.days} days</Txt>
+              <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.pickup} → {b.dropoff} · ~{(b.estimated_miles || 0).toLocaleString()} mi</Txt>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                 <Txt size={type.sm} color={colors.onSurfaceSecondary}>You earn</Txt>
                 <Display size={type.lg} color={colors.success}>${b.owner_earnings}</Display>

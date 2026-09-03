@@ -57,7 +57,7 @@ export default function Rigs() {
                 <Display size={type.lg} numberOfLines={1}>{item.title}</Display>
                 <View style={{ flexDirection: "row", gap: spacing.sm }}>
                   <Badge label={item.category} tone="brand" />
-                  <Badge label={`$${item.daily_rate}/day`} tone="muted" />
+                  <Badge label={`$${(item.price_per_mile || 0).toFixed(2)}/mi`} tone="muted" />
                 </View>
                 <Txt size={type.sm} color={colors.onSurfaceSecondary}>{item.location}</Txt>
               </View>
