@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field, EmailStr
 from passlib.context import CryptContext
 from dotenv import load_dotenv
@@ -31,7 +31,7 @@ db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ.get("JWT_SECRET", "rigrent-dev-secret-change-me")
 JWT_ALGO = "HS256"
 TOKEN_DAYS = 30
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
@@ -40,39 +40,26 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("rigrent")
 
 # ---------------------------------------------------------------- storage ----
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+# Files are stored directly in MongoDB via GridFS, so no separate storage
+# service or credentials are needed beyond MONGO_URL.
 APP_NAME = "rigrent"
-_storage_key = None
+fs_bucket = AsyncIOMotorGridFSBucket(db)
 
 
-def init_storage():
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-    resp.raise_for_status()
-    _storage_key = resp.json()["storage_key"]
-    return _storage_key
+async def put_object(path: str, data: bytes, content_type: str) -> dict:
+    await fs_bucket.upload_from_stream(path, data, metadata={"content_type": content_type})
+    return {"path": path}
 
 
-def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def get_object(path: str):
-    key = init_storage()
-    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+async def get_object(path: str):
+    cursor = fs_bucket.find({"filename": path}).sort("uploadDate", -1).limit(1)
+    docs = await cursor.to_list(length=1)
+    if not docs:
+        raise FileNotFoundError(path)
+    stream = await fs_bucket.open_download_stream(docs[0]["_id"])
+    content = await stream.read()
+    content_type = (docs[0].get("metadata") or {}).get("content_type", "application/octet-stream")
+    return content, content_type
 
 
 # ------------------------------------------------------------------- app -----
@@ -247,9 +234,44 @@ async def notify(user_id: str, title: str, body: str, ntype: str, data: Optional
 
 
 # --------------------------------------------------------- AI verification ---
+def _call_claude_vision(system_message: str, instruction: str, image_base64: str) -> str:
+    """Blocking call to Claude's vision API. Run this inside a threadpool."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": "claude-sonnet-5",
+            "max_tokens": 1024,
+            "system": system_message,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64},
+                        },
+                        {"type": "text", "text": instruction},
+                    ],
+                }
+            ],
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
+
+
 async def ai_extract(doc_type: str, image_base64: str) -> dict:
-    """Use GPT-5.4 vision to read a license or insurance document."""
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+    """Use Claude vision to read a license or insurance document."""
+    system_message = "You extract structured data from identity and insurance documents and return strict JSON only."
 
     if doc_type == "license":
         instruction = (
@@ -270,17 +292,9 @@ async def ai_extract(doc_type: str, image_base64: str) -> dict:
             "If the image is not an insurance document or unreadable, set is_readable=false."
         )
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"verify-{uuid.uuid4()}",
-        system_message="You extract structured data from identity and insurance documents and return strict JSON only.",
-    ).with_model("openai", "gpt-5.4")
+    raw = await run_in_threadpool(_call_claude_vision, system_message, instruction, image_base64)
 
-    msg = UserMessage(text=instruction, file_contents=[ImageContent(image_base64=image_base64)])
-    raw = await chat.send_message(msg)
-
-    text = raw if isinstance(raw, str) else str(raw)
-    text = text.strip()
+    text = raw.strip()
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         text = match.group(0)
@@ -352,7 +366,7 @@ async def verify_document(data: VerifyIn, user: dict = Depends(get_current_user)
     try:
         raw = base64.b64decode(data.image_base64)
         path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.jpg"
-        await run_in_threadpool(put_object, path, raw, "image/jpeg")
+        await put_object(path, raw, "image/jpeg")
     except Exception as e:
         logger.error(f"storage upload failed: {e}")
         path = None
@@ -427,7 +441,7 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(get_current_
     path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.{ext}"
     ctype = file.content_type or "application/octet-stream"
     try:
-        await run_in_threadpool(put_object, path, content, ctype)
+        await put_object(path, content, ctype)
     except Exception as e:
         logger.error(f"upload failed: {e}")
         raise HTTPException(status_code=502, detail="Upload failed")
@@ -441,7 +455,7 @@ async def files(path: str, token: Optional[str] = Query(None)):
     if not rec:
         raise HTTPException(status_code=404, detail="File not found")
     try:
-        content, ctype = await run_in_threadpool(get_object, path)
+        content, ctype = await get_object(path)
     except Exception as e:
         logger.error(f"download failed: {e}")
         raise HTTPException(status_code=404, detail="File not found")
@@ -895,11 +909,6 @@ async def on_startup():
         await seed()
     except Exception as e:
         logger.error(f"seed failed: {e}")
-    if EMERGENT_LLM_KEY:
-        try:
-            await run_in_threadpool(init_storage)
-        except Exception as e:
-            logger.error(f"storage init failed: {e}")
 
 
 @app.on_event("shutdown")
