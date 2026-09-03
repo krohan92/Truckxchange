@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
@@ -14,10 +14,13 @@ export default function Profile() {
   const router = useRouter();
   const { user, logout, refresh } = useAuth();
   const [rate, setRate] = useState(0.15);
+  const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
+  const [connectBusy, setConnectBusy] = useState(false);
 
   useFocusEffect(useCallback(() => {
     refresh();
     apiFetch<any>("/settings", { auth: false }).then((s) => setRate(s.commission_rate)).catch(() => {});
+    apiFetch<any>("/stripe/status").then(setPayoutStatus).catch(() => {});
   }, []));
 
   const updateRate = async (delta: number) => {
@@ -29,6 +32,16 @@ export default function Profile() {
   if (!user) return null;
   const isRenter = user.role === "renter";
   const isAdmin = user.role === "admin";
+  const receivesPayouts = user.role === "owner" || user.role === "vendor";
+
+  const connectPayouts = async () => {
+    setConnectBusy(true);
+    try {
+      const res = await apiFetch<{ onboarding_url: string }>("/stripe/connect", { method: "POST" });
+      await Linking.openURL(res.onboarding_url);
+    } catch {}
+    finally { setConnectBusy(false); }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing.xxxl }} showsVerticalScrollIndicator={false}>
@@ -67,10 +80,28 @@ export default function Profile() {
           </Card>
         )}
 
+        {receivesPayouts && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>PAYOUTS</Display>
+            {payoutStatus.charges_enabled ? (
+              <>
+                <StatusRow label="Stripe payouts" ok={true} />
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>You're set up to receive payments directly to your bank account.</Txt>
+              </>
+            ) : (
+              <>
+                <StatusRow label="Stripe payouts" ok={false} />
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>Connect a Stripe account so renters can pay you directly through the app.</Txt>
+                <Btn title={payoutStatus.connected ? "Finish Stripe Setup" : "Connect Payouts"} icon="bank" variant="secondary" onPress={connectPayouts} loading={connectBusy} testID="connect-payouts-btn" />
+              </>
+            )}
+          </Card>
+        )}
+
         <Card style={{ gap: spacing.md }}>
           <Display size={type.lg}>HOW SPLITS WORK</Display>
           <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22 }}>
-            Every booking is split automatically: the truck or trailer owner earns the majority, and RigRent keeps a small platform fee ({Math.round(rate * 100)}%). Payments are simulated for now — no card is charged.
+            Every booking is split automatically: the truck or trailer owner earns the majority, and RigRent keeps a small platform fee ({Math.round(rate * 100)}%). Payment is processed securely through Stripe and split at checkout.
           </Txt>
         </Card>
 
