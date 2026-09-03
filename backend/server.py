@@ -169,6 +169,12 @@ class ReviewIn(BaseModel):
     note: Optional[str] = ""
 
 
+class MessageIn(BaseModel):
+    context_type: Literal["booking", "request"]
+    context_id: str
+    body: str = Field(min_length=1, max_length=2000)
+
+
 # --------------------------------------------------------------- helpers -----
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -934,6 +940,128 @@ async def mark_read(nid: str, user: dict = Depends(get_current_user)):
 async def mark_all_read(user: dict = Depends(get_current_user)):
     await db.notifications.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
     return {"ok": True}
+
+
+# ============================================================== MESSAGES ======
+async def _thread_participants(context_type: str, context_id: str) -> Optional[set]:
+    """Who is allowed to read/write this conversation. None if the underlying
+    booking/request doesn't exist."""
+    if context_type == "booking":
+        b = await db.bookings.find_one({"id": context_id}, {"_id": 0, "owner_id": 1, "renter_id": 1})
+        if not b:
+            return None
+        return {b["owner_id"], b["renter_id"]}
+    if context_type == "request":
+        r = await db.requests.find_one({"id": context_id}, {"_id": 0, "poster_id": 1})
+        if not r:
+            return None
+        parts = {r["poster_id"]}
+        async for bid in db.bids.find({"request_id": context_id}, {"_id": 0, "vendor_id": 1}):
+            parts.add(bid["vendor_id"])
+        return parts
+    return None
+
+
+@api.post("/messages")
+async def send_message(data: MessageIn, user: dict = Depends(get_current_user)):
+    participants = await _thread_participants(data.context_type, data.context_id)
+    if participants is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if user["id"] not in participants:
+        raise HTTPException(status_code=403, detail="You're not part of this conversation")
+
+    body = data.body.strip()
+    msg = {
+        "id": str(uuid.uuid4()),
+        "context_type": data.context_type,
+        "context_id": data.context_id,
+        "sender_id": user["id"],
+        "sender_name": user["name"],
+        "body": body,
+        "read_by": [user["id"]],
+        "created_at": now_iso(),
+    }
+    await db.messages.insert_one(dict(msg))
+    msg.pop("_id", None)
+
+    for pid in participants:
+        if pid != user["id"]:
+            await notify(
+                pid,
+                f"New message from {user['name']}",
+                body[:120],
+                "message",
+                {"context_type": data.context_type, "context_id": data.context_id},
+            )
+    return msg
+
+
+@api.get("/messages/{context_type}/{context_id}")
+async def get_thread(context_type: str, context_id: str, user: dict = Depends(get_current_user)):
+    participants = await _thread_participants(context_type, context_id)
+    if participants is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if user["id"] not in participants:
+        raise HTTPException(status_code=403, detail="You're not part of this conversation")
+
+    msgs = await db.messages.find(
+        {"context_type": context_type, "context_id": context_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+
+    await db.messages.update_many(
+        {"context_type": context_type, "context_id": context_id, "read_by": {"$ne": user["id"]}},
+        {"$addToSet": {"read_by": user["id"]}},
+    )
+    return {"messages": msgs}
+
+
+@api.get("/messages/threads")
+async def list_threads(user: dict = Depends(get_current_user)):
+    """Every conversation this user is part of, newest first, with a preview
+    and unread count — powers a Messages inbox screen."""
+    threads = []
+
+    async for b in db.bookings.find(
+        {"$or": [{"owner_id": user["id"]}, {"renter_id": user["id"]}]},
+        {"_id": 0, "id": 1, "listing_title": 1, "owner_id": 1, "renter_id": 1, "owner_name": 1, "renter_name": 1},
+    ):
+        last = await db.messages.find_one(
+            {"context_type": "booking", "context_id": b["id"]}, {"_id": 0}, sort=[("created_at", -1)]
+        )
+        if not last:
+            continue
+        unread = await db.messages.count_documents(
+            {"context_type": "booking", "context_id": b["id"], "read_by": {"$ne": user["id"]}}
+        )
+        other_name = b.get("renter_name") if user["id"] == b["owner_id"] else (b.get("owner_name") or "Owner")
+        threads.append({
+            "context_type": "booking", "context_id": b["id"], "title": b["listing_title"],
+            "with_name": other_name, "last_message": last["body"], "last_at": last["created_at"], "unread": unread,
+        })
+
+    vendor_request_ids = [
+        bid["request_id"] async for bid in db.bids.find({"vendor_id": user["id"]}, {"_id": 0, "request_id": 1})
+    ]
+    async for r in db.requests.find(
+        {"$or": [{"poster_id": user["id"]}, {"id": {"$in": vendor_request_ids}}]},
+        {"_id": 0, "id": 1, "title": 1, "poster_id": 1, "poster_name": 1},
+    ):
+        last = await db.messages.find_one(
+            {"context_type": "request", "context_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)]
+        )
+        if not last:
+            continue
+        unread = await db.messages.count_documents(
+            {"context_type": "request", "context_id": r["id"], "read_by": {"$ne": user["id"]}}
+        )
+        with_name = r.get("poster_name") if user["id"] != r["poster_id"] else "Bidders"
+        threads.append({
+            "context_type": "request", "context_id": r["id"], "title": r["title"],
+            "with_name": with_name, "last_message": last["body"], "last_at": last["created_at"], "unread": unread,
+        })
+
+    threads.sort(key=lambda t: t["last_at"], reverse=True)
+    return {"threads": threads}
 
 
 # ========================================================= ROADSIDE / BIDS ====
