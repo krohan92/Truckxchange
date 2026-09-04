@@ -97,6 +97,25 @@ export default function BookingDetail() {
           {b.notes ? <Row label="Notes" value={b.notes} /> : null}
         </Card>
 
+        {b.pickup_address ? (
+          <Card style={{ gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="map-marker-radius" size={18} color={colors.brand} />
+              <Display size={type.lg}>PICKUP DETAILS</Display>
+            </View>
+            <Row label="Address" value={b.pickup_address} />
+            {b.pickup_instructions ? <Row label="Instructions" value={b.pickup_instructions} /> : null}
+            {b.access_code ? <Row label="Access code" value={b.access_code} tone={colors.brand} /> : null}
+          </Card>
+        ) : !isOwner && b.status === "pending" ? (
+          <Card style={{ gap: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="lock-outline" size={18} color={colors.onSurfaceSecondary} />
+              <Txt color={colors.onSurfaceSecondary}>Pickup address is revealed once the owner approves this booking.</Txt>
+            </View>
+          </Card>
+        ) : null}
+
         <Card style={{ gap: spacing.md }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Icon name="cash" size={18} color={colors.brand} />
