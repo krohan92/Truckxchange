@@ -9,7 +9,8 @@ import { apiFetch, uploadFile, fileUrl } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
-const CATS = ["Semi", "Box", "Flatbed", "Reefer", "Dry Van", "Lowboy"];
+const TRUCK_CATS = ["Semi", "Box", "Flatbed Truck", "Dump Truck"];
+const TRAILER_CATS = ["Flatbed", "Reefer", "Dry Van", "Lowboy"];
 
 export default function CreateListing() {
   const router = useRouter();
@@ -17,6 +18,7 @@ export default function CreateListing() {
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<"truck" | "trailer">("truck");
   const [category, setCategory] = useState("Semi");
+  const CATS = kind === "truck" ? TRUCK_CATS : TRAILER_CATS;
   const [location, setLocation] = useState("");
   const [rate, setRate] = useState("");
   const [year, setYear] = useState("");
@@ -111,7 +113,7 @@ export default function CreateListing() {
               <View key={p} style={styles.thumbWrap}>
                 <Image source={{ uri: fileUrl(p) }} style={StyleSheet.absoluteFill} contentFit="cover" />
                 <Pressable testID={`remove-photo-${i}`} onPress={() => setPhotos((arr) => arr.filter((x) => x !== p))} style={styles.removeThumb}>
-                  <Icon name="close" size={14} color={colors.onSurface} />
+                  <Icon name="close" size={14} color={colors.onScrim} />
                 </Pressable>
               </View>
             ))}
@@ -124,7 +126,7 @@ export default function CreateListing() {
 
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           {(["truck", "trailer"] as const).map((k) => (
-            <Pressable key={k} testID={`kind-${k}`} onPress={() => setKind(k)} style={[styles.kindBtn, kind === k && styles.kindActive]}>
+            <Pressable key={k} testID={`kind-${k}`} onPress={() => { setKind(k); setCategory(k === "truck" ? TRUCK_CATS[0] : TRAILER_CATS[0]); }} style={[styles.kindBtn, kind === k && styles.kindActive]}>
               <Icon name={k === "truck" ? "truck" : "truck-trailer"} size={22} color={kind === k ? colors.brand : colors.onSurfaceSecondary} />
               <Txt weight="bold" color={kind === k ? colors.onSurface : colors.onSurfaceSecondary}>{k === "truck" ? "Truck" : "Trailer"}</Txt>
             </Pressable>
@@ -184,7 +186,7 @@ const styles = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
   photoBox: { height: 180, borderRadius: radius.lg, borderWidth: 2, borderStyle: "dashed", borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   thumbWrap: { width: 110, height: 110, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary },
-  removeThumb: { position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: 12, backgroundColor: "rgba(15,15,18,0.7)", alignItems: "center", justifyContent: "center" },
+  removeThumb: { position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: 12, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center" },
   addTile: { width: 110, height: 110, borderRadius: radius.md, borderWidth: 2, borderStyle: "dashed", borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", gap: 4 },
   kindBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   kindActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
