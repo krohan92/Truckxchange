@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
-import { Txt, Display, Field, Btn, Icon, Loader, Badge, Card } from "@/src/ui";
+import { Txt, Display, Field, Btn, Icon, Loader, Badge, Card, Chip } from "@/src/ui";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
 
 const { width } = Dimensions.get("window");
@@ -34,6 +34,8 @@ export default function ListingDetail() {
   const [pickup, setPickup] = useState("");
   const [dropoff, setDropoff] = useState("");
   const [notes, setNotes] = useState("");
+  const [returnSameLocation, setReturnSameLocation] = useState(true);
+  const [returnLocationNote, setReturnLocationNote] = useState("");
 
   useFocusEffect(
     useCallback(() => {
@@ -87,6 +89,8 @@ export default function ListingDetail() {
           load_weight: loadWeight,
           pickup,
           dropoff,
+          return_same_location: returnSameLocation,
+          return_location_note: returnSameLocation ? "" : returnLocationNote,
           notes,
         },
       });
@@ -204,6 +208,21 @@ export default function ListingDetail() {
                 <Field label="Load weight (optional)" placeholder="e.g. 38,000 lb" value={loadWeight} onChangeText={setLoadWeight} />
                 <Field label="Pickup" placeholder="Origin city" value={pickup} onChangeText={setPickup} testID="input-pickup" />
                 <Field label="Dropoff" placeholder="Destination city" value={dropoff} onChangeText={setDropoff} testID="input-dropoff" />
+
+                <Txt size={type.sm} weight="medium" color={colors.onSurfaceSecondary} style={{ marginTop: spacing.sm }}>Returning the rig itself</Txt>
+                <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                  <Chip label="Same pickup location" active={returnSameLocation} onPress={() => setReturnSameLocation(true)} />
+                  <Chip label="Different drop-off" active={!returnSameLocation} onPress={() => setReturnSameLocation(false)} />
+                </View>
+                {!returnSameLocation ? (
+                  <Field
+                    placeholder="Where will you leave it? (owner must agree)"
+                    value={returnLocationNote}
+                    onChangeText={setReturnLocationNote}
+                    testID="input-return-location"
+                  />
+                ) : null}
+
                 <Field label="Notes (optional)" placeholder="Anything the owner should know" value={notes} onChangeText={setNotes} multiline />
               </View>
 
