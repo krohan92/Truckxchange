@@ -98,6 +98,14 @@ class ListingIn(BaseModel):
     kind: Literal["truck", "trailer"]
     category: str  # Semi, Box, Flatbed Truck, Dump Truck (trucks) | Flatbed, Reefer, Dry Van, Lowboy (trailers)
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    # Exact pickup logistics. Kept separate from the public "location" (city/state)
+    # shown on browse cards — these are only revealed to a renter once their
+    # booking is approved, so a random browser can't see an owner's exact address.
+    pickup_address: Optional[str] = ""
+    pickup_instructions: Optional[str] = ""
+    access_code: Optional[str] = ""
     price_per_mile: float = Field(gt=0)
     daily_rate: Optional[float] = 0
     year: Optional[int] = None
@@ -556,13 +564,24 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
         "deleted_at": None,
         "created_at": now_iso(),
     }
+    # GeoJSON point for $geoNear "near me" search, alongside the plain lat/lng.
+    if data.latitude is not None and data.longitude is not None:
+        listing["geo"] = {"type": "Point", "coordinates": [data.longitude, data.latitude]}
     await db.listings.insert_one(dict(listing))
     listing.pop("_id", None)
     return listing
 
 
 @api.get("/listings")
-async def list_listings(category: Optional[str] = None, q: Optional[str] = None, kind: Optional[str] = None, sort: Optional[str] = None):
+async def list_listings(
+    category: Optional[str] = None,
+    q: Optional[str] = None,
+    kind: Optional[str] = None,
+    sort: Optional[str] = None,
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    radius_mi: Optional[float] = None,
+):
     query = {"active": True, "deleted_at": None}
     if category and category != "All":
         query["category"] = category
@@ -570,6 +589,28 @@ async def list_listings(category: Optional[str] = None, q: Optional[str] = None,
         query["kind"] = kind
     if q:
         query["title"] = {"$regex": q, "$options": "i"}
+
+    # "Near me" search: sort by real distance from the renter's device location.
+    if lat is not None and lng is not None:
+        geo_query = dict(query)
+        geo_query["geo"] = {"$exists": True}
+        pipeline = [
+            {
+                "$geoNear": {
+                    "near": {"type": "Point", "coordinates": [lng, lat]},
+                    "distanceField": "distance_meters",
+                    "spherical": True,
+                    "query": geo_query,
+                    **({"maxDistance": radius_mi * 1609.34} if radius_mi else {}),
+                }
+            },
+            {"$project": {"_id": 0, "pickup_address": 0, "pickup_instructions": 0, "access_code": 0}},
+            {"$limit": 200},
+        ]
+        items = await db.listings.aggregate(pipeline).to_list(200)
+        for it in items:
+            it["distance_mi"] = round(it.pop("distance_meters", 0) / 1609.34, 1)
+        return items
 
     sort_field, sort_dir = "created_at", -1
     if sort == "price_low":
@@ -579,7 +620,9 @@ async def list_listings(category: Optional[str] = None, q: Optional[str] = None,
     elif sort == "rating":
         sort_field, sort_dir = "rating", -1
 
-    items = await db.listings.find(query, {"_id": 0}).sort(sort_field, sort_dir).to_list(200)
+    items = await db.listings.find(
+        query, {"_id": 0, "pickup_address": 0, "pickup_instructions": 0, "access_code": 0}
+    ).sort(sort_field, sort_dir).to_list(200)
     return items
 
 
@@ -601,7 +644,10 @@ async def listing_availability(lid: str):
 
 @api.get("/listings/{lid}")
 async def get_listing(lid: str):
-    item = await db.listings.find_one({"id": lid, "deleted_at": None}, {"_id": 0})
+    item = await db.listings.find_one(
+        {"id": lid, "deleted_at": None},
+        {"_id": 0, "pickup_address": 0, "pickup_instructions": 0, "access_code": 0},
+    )
     if not item:
         raise HTTPException(status_code=404, detail="Listing not found")
     return item
@@ -705,6 +751,19 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Booking not found")
     if user["id"] == item["renter_id"] and user["role"] != "admin":
         item = strip_fee(item)
+
+    # Exact pickup address/instructions/access code are only revealed once the
+    # owner has approved the booking — not while it's still just pending.
+    if item.get("status") in ("approved", "active", "completed"):
+        listing = await db.listings.find_one(
+            {"id": item["listing_id"]},
+            {"_id": 0, "pickup_address": 1, "pickup_instructions": 1, "access_code": 1},
+        )
+        if listing:
+            item["pickup_address"] = listing.get("pickup_address") or ""
+            item["pickup_instructions"] = listing.get("pickup_instructions") or ""
+            item["access_code"] = listing.get("access_code") or ""
+
     return item
 
 
@@ -1264,6 +1323,7 @@ async def seed():
             {
                 "title": "Freightliner Cascadia Sleeper",
                 "kind": "truck", "category": "Semi", "location": "Dallas, TX",
+                "latitude": 32.7767, "longitude": -96.7970,
                 "daily_rate": 320, "year": 2022, "make": "Freightliner", "capacity": "80,000 lb GVWR",
                 "description": "Long-haul sleeper cab, APU equipped, fresh service. Ready for OTR.",
                 "photos": ["https://images.unsplash.com/photo-1779583074717-e60fa13131ce?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
@@ -1271,6 +1331,7 @@ async def seed():
             {
                 "title": "48ft Reefer Trailer",
                 "kind": "trailer", "category": "Reefer", "location": "Atlanta, GA",
+                "latitude": 33.7490, "longitude": -84.3880,
                 "daily_rate": 145, "year": 2021, "make": "Utility", "capacity": "44,000 lb",
                 "description": "Carrier reefer unit, continuous run, temp logging. Perfect for cold chain loads.",
                 "photos": ["https://images.unsplash.com/photo-1601467995997-ac1ae9a8fff4?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
@@ -1278,6 +1339,7 @@ async def seed():
             {
                 "title": "53ft Flatbed Trailer",
                 "kind": "trailer", "category": "Flatbed", "location": "Phoenix, AZ",
+                "latitude": 33.4484, "longitude": -112.0740,
                 "daily_rate": 110, "year": 2020, "make": "Fontaine", "capacity": "48,000 lb",
                 "description": "Aluminum flatbed with straps, chains and tarps included. Steel/lumber ready.",
                 "photos": ["https://images.unsplash.com/photo-1740774017942-23f80f6477c5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
@@ -1285,6 +1347,7 @@ async def seed():
             {
                 "title": "Box Truck 26ft w/ Liftgate",
                 "kind": "truck", "category": "Box", "location": "Chicago, IL",
+                "latitude": 41.8781, "longitude": -87.6298,
                 "daily_rate": 180, "year": 2023, "make": "Isuzu", "capacity": "12,000 lb",
                 "description": "Non-CDL box truck, liftgate, e-track. Great for last mile and moves.",
                 "photos": ["https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"],
@@ -1292,11 +1355,16 @@ async def seed():
         ]
         ppm_list = [2.20, 1.90, 1.75, 1.40]
         for i, d in enumerate(demo):
+            lat, lng = d.pop("latitude", None), d.pop("longitude", None)
+            geo = {"type": "Point", "coordinates": [lng, lat]} if lat is not None and lng is not None else None
             await db.listings.insert_one({
                 "id": str(uuid.uuid4()),
                 "owner_id": owner["id"],
                 "owner_name": owner["name"],
                 **d,
+                "latitude": lat,
+                "longitude": lng,
+                **({"geo": geo} if geo else {}),
                 "price_per_mile": ppm_list[i % len(ppm_list)],
                 "rating": 0,
                 "rating_count": 0,
@@ -1320,6 +1388,10 @@ async def on_startup():
         await seed()
     except Exception as e:
         logger.error(f"seed failed: {e}")
+    try:
+        await db.listings.create_index([("geo", "2dsphere")])
+    except Exception as e:
+        logger.error(f"geo index creation failed: {e}")
 
 
 @app.on_event("shutdown")
