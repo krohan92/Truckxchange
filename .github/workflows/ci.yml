@@ -1,0 +1,32 @@
+name: Sanity Check
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  backend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check backend Python syntax
+        run: python -m py_compile backend/*.py
+
+  frontend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install syntax parser
+        run: npm install --no-save @babel/parser
+      - name: Validate JSON config files
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('frontend/package.json','utf8')); console.log('package.json OK')"
+          node -e "JSON.parse(require('fs').readFileSync('frontend/app.json','utf8')); console.log('app.json OK')"
+      - name: Check TSX/TS/JS syntax + verify every import is a declared dependency
+        run: node .github/scripts/check-frontend.js
