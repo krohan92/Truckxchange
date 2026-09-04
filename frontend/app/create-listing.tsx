@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,12 +21,41 @@ export default function CreateListing() {
   const [category, setCategory] = useState("Semi");
   const CATS = kind === "truck" ? TRUCK_CATS : TRAILER_CATS;
   const [location, setLocation] = useState("");
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locBusy, setLocBusy] = useState(false);
+  const [locError, setLocError] = useState("");
+
+  const useCurrentLocation = async () => {
+    setLocError("");
+    setLocBusy(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        setLocError("Location permission denied — you can still type the location manually.");
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      const places = await Location.reverseGeocodeAsync(pos.coords);
+      if (places?.[0]) {
+        const p = places[0];
+        setLocation([p.city, p.region].filter(Boolean).join(", ") || location);
+      }
+    } catch (e: any) {
+      setLocError("Couldn't get your location — you can still type it manually.");
+    } finally {
+      setLocBusy(false);
+    }
+  };
   const [rate, setRate] = useState("");
   const [year, setYear] = useState("");
   const [make, setMake] = useState("");
   const [capacity, setCapacity] = useState("");
   const [description, setDescription] = useState("");
   const [dot, setDot] = useState("");
+  const [pickupAddress, setPickupAddress] = useState("");
+  const [pickupInstructions, setPickupInstructions] = useState("");
+  const [accessCode, setAccessCode] = useState("");
   const [mc, setMc] = useState("");
   const [vin, setVin] = useState("");
   const [plate, setPlate] = useState("");
@@ -85,10 +115,15 @@ export default function CreateListing() {
         method: "POST",
         body: {
           title, kind, category, location,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
           price_per_mile: parseFloat(rate) || 0,
           year: year ? parseInt(year, 10) : null,
           make, capacity, description,
           photos,
+          pickup_address: pickupAddress,
+          pickup_instructions: pickupInstructions,
+          access_code: accessCode,
           dot_number: dot, mc_number: mc, vin, plate,
           insurance_provider: insProvider, insurance_policy: insPolicy, insurance_expiry: insExpiry,
         },
@@ -145,7 +180,17 @@ export default function CreateListing() {
           <View style={{ flex: 1 }}><Field label="Price / mile ($)" placeholder="2.20" keyboardType="decimal-pad" value={rate} onChangeText={setRate} testID="input-rate" /></View>
           <View style={{ flex: 1 }}><Field label="Year" placeholder="2022" keyboardType="number-pad" value={year} onChangeText={setYear} /></View>
         </View>
-        <Field label="Location" placeholder="City, State" value={location} onChangeText={setLocation} testID="input-location" />
+        <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-end" }}>
+          <View style={{ flex: 1 }}><Field label="Location" placeholder="City, State" value={location} onChangeText={setLocation} testID="input-location" /></View>
+          <Btn title={locBusy ? "Locating…" : "Use My Location"} variant="secondary" icon="crosshairs-gps" onPress={useCurrentLocation} loading={locBusy} />
+        </View>
+        {locError ? <Txt size={type.sm} color={colors.error}>{locError}</Txt> : coords ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>Pinned so renters can find this rig by "Near Me" search.</Txt> : null}
+
+        <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium" style={{ marginTop: spacing.md }}>Pickup Details</Txt>
+        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Only shown to a renter after you approve their booking — not visible while browsing.</Txt>
+        <Field label="Exact pickup address" placeholder="1200 Warehouse Rd, Dallas, TX" value={pickupAddress} onChangeText={setPickupAddress} testID="input-pickup-address" />
+        <Field label="Pickup instructions (optional)" placeholder="Enter through the side gate, truck is parked in bay 4" value={pickupInstructions} onChangeText={setPickupInstructions} multiline testID="input-pickup-instructions" />
+        <Field label="Access code / lockbox code (optional)" placeholder="e.g. gate code 4521" value={accessCode} onChangeText={setAccessCode} testID="input-access-code" />
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           <View style={{ flex: 1 }}><Field label="Make" placeholder="Freightliner" value={make} onChangeText={setMake} /></View>
           <View style={{ flex: 1 }}><Field label="Capacity" placeholder="80,000 lb" value={capacity} onChangeText={setCapacity} /></View>
