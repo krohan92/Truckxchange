@@ -69,12 +69,12 @@ export default function Auth() {
     <View style={styles.container}>
       <View style={styles.hero}>
         <Image source={{ uri: HERO }} style={StyleSheet.absoluteFill} contentFit="cover" />
-        <LinearGradient colors={["rgba(15,15,18,0.2)", colors.surface]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={[colors.scrim, colors.surface]} style={StyleSheet.absoluteFill} />
         <View style={[styles.brandRow, { top: insets.top + spacing.lg }]}>
           <View style={styles.logoBadge}>
             <Icon name="truck-fast" size={22} color={colors.onBrand} />
           </View>
-          <Display size={type.xxl} style={{ letterSpacing: 1 }}>RIGRENT</Display>
+          <Display size={type.xxl} style={{ letterSpacing: 1 }} color={colors.onScrim}>RIGRENT</Display>
         </View>
       </View>
 
