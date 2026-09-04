@@ -115,9 +115,9 @@ export default function ListingDetail() {
               <Image key={i} source={{ uri: fileUrl(p) }} style={{ width, height: 300 }} contentFit="cover" transition={200} />
             ))}
           </ScrollView>
-          <LinearGradient colors={["rgba(15,15,18,0.6)", "transparent", colors.surface]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          <LinearGradient colors={[colors.scrim, "transparent", colors.surface]} style={StyleSheet.absoluteFill} pointerEvents="none" />
           <Pressable testID="back-btn" onPress={() => router.back()} style={[styles.backBtn, { top: insets.top + spacing.sm }]}>
-            <Icon name="chevron-left" size={26} color={colors.onSurface} />
+            <Icon name="chevron-left" size={26} color={colors.onScrim} />
           </Pressable>
           {listing.photos?.length > 1 ? (
             <View style={styles.dots}>
@@ -298,7 +298,7 @@ function SplitRow({ label, value, tone }: { label: string; value: string; tone?:
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   hero: { height: 300 },
-  backBtn: { position: "absolute", left: spacing.lg, width: 40, height: 40, borderRadius: radius.pill, backgroundColor: "rgba(15,15,18,0.6)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
+  backBtn: { position: "absolute", left: spacing.lg, width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
   dots: { position: "absolute", bottom: spacing.xxl, alignSelf: "center", flexDirection: "row", gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" },
   dotActive: { backgroundColor: colors.brand, width: 18 },
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingTop: spacing.md,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
   },
-  modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  modalScrim: { flex: 1, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "center", padding: spacing.xl },
   modalCard: { width: "100%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.xl, gap: spacing.md, alignItems: "stretch" },
   successCircle: { alignSelf: "center", width: 84, height: 84, borderRadius: 42, backgroundColor: "rgba(16,185,129,0.14)", alignItems: "center", justifyContent: "center" },
   modalSplit: { backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, padding: spacing.lg, gap: spacing.sm },
