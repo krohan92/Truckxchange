@@ -132,6 +132,8 @@ class BookingIn(BaseModel):
     load_weight: Optional[str] = None
     pickup: str
     dropoff: str
+    return_same_location: bool = True
+    return_location_note: Optional[str] = ""
     notes: Optional[str] = ""
 
 
@@ -772,19 +774,46 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
     item = await db.bookings.find_one({"id": bid})
     if not item:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if data.status in ("approved", "declined") and user["id"] != item["owner_id"]:
-        raise HTTPException(status_code=403, detail="Only the owner can approve or decline")
-    await db.bookings.update_one({"id": bid}, {"$set": {"status": data.status}})
+    if user["id"] not in (item["owner_id"], item["renter_id"]):
+        raise HTTPException(status_code=403, detail="Not your booking")
+
+    current = item["status"]
+    target = data.status
+
+    # A booking can only move forward through a defined sequence, and only the
+    # right party can trigger each step — otherwise either side could jump
+    # straight from "pending" to "completed" with a raw API call.
+    ALLOWED = {
+        "pending": {"approved": "owner", "declined": "owner", "cancelled": "either"},
+        "approved": {"active": "owner", "cancelled": "either"},
+        "active": {"completed": "owner", "cancelled": "either"},
+    }
+    rule = ALLOWED.get(current, {})
+    who = rule.get(target)
+    if who is None:
+        raise HTTPException(status_code=400, detail=f"Can't move a {current} booking to {target}")
+    if who == "owner" and user["id"] != item["owner_id"]:
+        raise HTTPException(status_code=403, detail="Only the owner can do that")
+
+    if target == "completed":
+        has_after_inspection = any(i.get("phase") == "after" for i in item.get("inspections", []))
+        if not has_after_inspection:
+            raise HTTPException(status_code=400, detail="Log a return (after) inspection before marking this trip completed.")
+
+    await db.bookings.update_one({"id": bid}, {"$set": {"status": target}})
     title = item["listing_title"]
-    if data.status == "approved":
+    if target == "approved":
         await notify(item["renter_id"], "Booking approved", f"Your booking for {title} was approved. Get ready to roll!", "booking_approved", {"booking_id": bid})
-    elif data.status == "declined":
+    elif target == "declined":
         await notify(item["renter_id"], "Booking declined", f"Your booking for {title} was declined.", "booking_declined", {"booking_id": bid})
-    elif data.status == "active":
+    elif target == "active":
         await notify(item["owner_id"], "Rig picked up", f"{item['renter_name']} picked up {title}. The trip has started.", "trip_started", {"booking_id": bid})
-    elif data.status == "completed":
+    elif target == "completed":
         await notify(item["renter_id"], "Trip completed", f"Your trip with {title} is complete. Safe travels!", "trip_completed", {"booking_id": bid})
-    return {"ok": True, "status": data.status}
+    elif target == "cancelled":
+        other = item["renter_id"] if user["id"] == item["owner_id"] else item["owner_id"]
+        await notify(other, "Booking cancelled", f"The booking for {title} was cancelled.", "booking_cancelled", {"booking_id": bid})
+    return {"ok": True, "status": target}
 
 
 @api.post("/bookings/{bid}/inspection")
