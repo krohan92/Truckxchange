@@ -64,7 +64,7 @@ export default function RootLayout() {
         <KeyboardProvider>
           <AuthProvider>
             <PushRegistrar />
-            <StatusBar style="light" />
+            <StatusBar style="dark" />
             <ResponsiveShell>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface }, animation: "slide_from_right" }} />
             </ResponsiveShell>
