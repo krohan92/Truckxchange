@@ -96,7 +96,7 @@ class VerifyIn(BaseModel):
 class ListingIn(BaseModel):
     title: str
     kind: Literal["truck", "trailer"]
-    category: str  # Box, Flatbed, Reefer, Semi, Dry Van, Lowboy
+    category: str  # Semi, Box, Flatbed Truck, Dump Truck (trucks) | Flatbed, Reefer, Dry Van, Lowboy (trailers)
     location: str
     price_per_mile: float = Field(gt=0)
     daily_rate: Optional[float] = 0
@@ -562,7 +562,7 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
 
 
 @api.get("/listings")
-async def list_listings(category: Optional[str] = None, q: Optional[str] = None, kind: Optional[str] = None):
+async def list_listings(category: Optional[str] = None, q: Optional[str] = None, kind: Optional[str] = None, sort: Optional[str] = None):
     query = {"active": True, "deleted_at": None}
     if category and category != "All":
         query["category"] = category
@@ -570,7 +570,16 @@ async def list_listings(category: Optional[str] = None, q: Optional[str] = None,
         query["kind"] = kind
     if q:
         query["title"] = {"$regex": q, "$options": "i"}
-    items = await db.listings.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+    sort_field, sort_dir = "created_at", -1
+    if sort == "price_low":
+        sort_field, sort_dir = "price_per_mile", 1
+    elif sort == "price_high":
+        sort_field, sort_dir = "price_per_mile", -1
+    elif sort == "rating":
+        sort_field, sort_dir = "rating", -1
+
+    items = await db.listings.find(query, {"_id": 0}).sort(sort_field, sort_dir).to_list(200)
     return items
 
 
