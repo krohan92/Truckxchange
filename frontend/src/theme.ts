@@ -1,23 +1,31 @@
 export const colors = {
-  surface: "#10141A",
-  onSurface: "#F5F3EE",
-  surfaceSecondary: "#1A2028",
-  onSurfaceSecondary: "#9CA3AF",
-  surfaceTertiary: "#242C36",
-  onSurfaceTertiary: "#D6D9DE",
-  surfaceInverse: "#F5F3EE",
-  onSurfaceInverse: "#10141A",
+  surface: "#F6F4EF",
+  onSurface: "#1B2028",
+  surfaceSecondary: "#FFFFFF",
+  onSurfaceSecondary: "#6B7280",
+  surfaceTertiary: "#EDEAE2",
+  onSurfaceTertiary: "#3F4650",
+  surfaceInverse: "#1B2028",
+  onSurfaceInverse: "#F5F3EE",
   brand: "#C98A2C",
-  onBrand: "#10141A",
-  brandSecondary: "#E0A94A",
+  onBrand: "#1B2028",
+  brandSecondary: "#A8721F",
   brandTertiary: "rgba(201, 138, 44, 0.14)",
-  onBrandTertiary: "#C98A2C",
-  success: "#3FA873",
-  warning: "#E2B33D",
-  error: "#E5484D",
-  info: "#4C8DFF",
-  border: "#262C35",
-  borderStrong: "#3A424D",
+  onBrandTertiary: "#8F6018",
+  success: "#2F8F5B",
+  warning: "#B8790A",
+  error: "#D8353D",
+  info: "#2F6FE0",
+  border: "#E2DED4",
+  borderStrong: "#CFC9BC",
+  // Overlays sit on top of photos/modals, not the page background, so they
+  // stay dark regardless of light/dark theme (keeps text legible on images).
+  scrim: "rgba(27, 32, 40, 0.75)",
+  overlay: "rgba(15, 17, 20, 0.6)",
+  // Text/icons drawn directly on top of the scrim (no background pill of
+  // their own) need a fixed light color so they stay legible either theme.
+  onScrim: "#F5F3EE",
+  onScrimSecondary: "rgba(245, 243, 238, 0.75)",
 };
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 };
