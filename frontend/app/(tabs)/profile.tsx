@@ -13,16 +13,18 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, logout, refresh } = useAuth();
-  const [rate, setRate] = useState(0.15);
+  const [rate, setRate] = useState(0.05);
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
   const [connectBusy, setConnectBusy] = useState(false);
   const [reseedBusy, setReseedBusy] = useState(false);
 
   useFocusEffect(useCallback(() => {
     refresh();
-    apiFetch<any>("/settings", { auth: false }).then((s) => setRate(s.commission_rate)).catch(() => {});
+    if (user?.role === "admin") {
+      apiFetch<any>("/settings").then((s) => setRate(s.commission_rate)).catch(() => {});
+    }
     apiFetch<any>("/stripe/status").then(setPayoutStatus).catch(() => {});
-  }, []));
+  }, [user?.role]));
 
   const updateRate = async (delta: number) => {
     const next = Math.min(0.5, Math.max(0, +(rate + delta).toFixed(2)));
@@ -112,13 +114,6 @@ export default function Profile() {
             )}
           </Card>
         )}
-
-        <Card style={{ gap: spacing.md }}>
-          <Display size={type.lg}>HOW SPLITS WORK</Display>
-          <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22 }}>
-            Every booking is split automatically: the truck or trailer owner earns the majority, and RigRent keeps a small platform fee ({Math.round(rate * 100)}%). Payment is processed securely through Stripe and split at checkout.
-          </Txt>
-        </Card>
 
         <Btn title="Log Out" icon="logout" variant="ghost" onPress={async () => { await logout(); router.replace("/auth"); }} testID="logout-btn" />
       </View>
