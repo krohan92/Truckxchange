@@ -4,9 +4,11 @@ import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
-import { Txt, Display, Icon, Loader, EmptyState, Badge } from "@/src/ui";
+import { Txt, Display, Icon, Loader, EmptyState, Badge, Btn } from "@/src/ui";
 import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { syncGeofences, requestBackgroundLocationPermission } from "@/src/services/geofencing";
+import * as Location from "expo-location";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
 
@@ -16,11 +18,30 @@ export default function Trips() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showLocationPrompt, setShowLocationPrompt] = useState(false);
+  const [locBusy, setLocBusy] = useState(false);
 
   const load = useCallback(async () => {
     const data = await apiFetch<any[]>("/bookings/mine");
     setItems(data);
+
+    const eligible = data.filter((b) => (b.status === "approved" || b.status === "active") && b.pickup_latitude != null);
+    if (eligible.length > 0) {
+      const { status } = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: "undetermined" as any }));
+      setShowLocationPrompt(status !== "granted");
+    } else {
+      setShowLocationPrompt(false);
+    }
+    syncGeofences(data);
   }, []);
+
+  const enableArrivalAlerts = async () => {
+    setLocBusy(true);
+    const granted = await requestBackgroundLocationPermission();
+    setShowLocationPrompt(!granted);
+    if (granted) await load();
+    setLocBusy(false);
+  };
 
   useFocusEffect(useCallback(() => { setLoading(true); load().finally(() => setLoading(false)); }, [load]));
 
@@ -33,6 +54,13 @@ export default function Trips() {
         </View>
         <NotificationBell />
       </View>
+      {showLocationPrompt ? (
+        <View style={styles.locBanner}>
+          <Icon name="map-marker-radius" size={18} color={colors.brand} />
+          <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ flex: 1 }}>Get an alert when you arrive at pickup or return.</Txt>
+          <Btn title="Enable" variant="secondary" onPress={enableArrivalAlerts} loading={locBusy} testID="enable-arrival-alerts" />
+        </View>
+      ) : null}
       {loading ? <Loader /> : (
         <FlatList
           data={items}
@@ -63,6 +91,7 @@ export default function Trips() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  locBanner: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.brandTertiary, padding: spacing.md, margin: spacing.lg, borderRadius: radius.md },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
   thumb: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
 });
