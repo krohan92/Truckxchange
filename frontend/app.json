@@ -13,7 +13,9 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Scan your license and inspect rigs",
         "NSPhotoLibraryUsageDescription": "Upload rig photos and documents",
-        "NSMicrophoneUsageDescription": "Record inspection walkaround videos"
+        "NSMicrophoneUsageDescription": "Record inspection walkaround videos",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "RigRent uses your location in the background to detect when you've arrived at pickup or return, so it can prompt you to start or finish a trip.",
+        "UIBackgroundModes": ["location"]
       }
     },
     "android": {
@@ -22,7 +24,7 @@
         "backgroundColor": "#000000"
       },
       "package": "com.rigrent.app",
-      "permissions": ["CAMERA", "RECORD_AUDIO", "READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO"]
+      "permissions": ["CAMERA", "RECORD_AUDIO", "READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO", "ACCESS_BACKGROUND_LOCATION"]
     },
     "web": {
       "bundler": "metro",
@@ -41,7 +43,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "RigRent uses your location to show nearby trucks and trailers, and to tag your listing's pickup location."
+          "locationWhenInUsePermission": "RigRent uses your location to show nearby trucks and trailers, and to tag your listing's pickup location.",
+          "locationAlwaysAndWhenInUsePermission": "RigRent uses your location in the background to detect when you've arrived at pickup or return, so it can prompt you to start or finish a trip.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       [
