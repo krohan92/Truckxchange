@@ -108,11 +108,14 @@ class ListingIn(BaseModel):
     pickup_instructions: Optional[str] = ""
     access_code: Optional[str] = ""
     cancellation_policy: Literal["flexible", "moderate", "strict"] = "moderate"
-    price_per_mile: float = Field(gt=0)
+    price_per_mile: float = Field(gt=0, description="Overage rate charged per mile once included_miles_per_day is used up")
     daily_rate: Optional[float] = 0
+    included_miles_per_day: Optional[float] = None
+    refuel_fee: Optional[float] = None
     year: Optional[int] = None
     make: Optional[str] = None
     capacity: Optional[str] = None
+    mileage: Optional[int] = None
     description: Optional[str] = ""
     photos: List[str] = []
     # Compliance / safety (required so no rig runs out of compliance)
@@ -215,6 +218,20 @@ CANCELLATION_POLICIES = {
 }
 
 
+def estimated_trip_days(start_date: str, end_date: str) -> int:
+    """Best-effort day count between two loosely-formatted dates. Falls back
+    to 1 day if either is missing/unparseable, so pricing never breaks."""
+    if not start_date or not end_date or start_date == "TBD" or end_date == "TBD":
+        return 1
+    try:
+        s = dateparser.parse(start_date, fuzzy=True, default=datetime.now(timezone.utc))
+        e = dateparser.parse(end_date, fuzzy=True, default=datetime.now(timezone.utc))
+        days = (e - s).days
+        return max(1, days)
+    except Exception:
+        return 1
+
+
 def compute_refund_fraction(policy_key: str, start_date: str, has_trip_started: bool) -> float:
     """How much of the payment to refund on cancellation, 0.0-1.0."""
     if has_trip_started:
@@ -263,6 +280,7 @@ def public_user(u: dict) -> dict:
         "insurance_verified": u.get("insurance_verified", False),
         "license_info": u.get("license_info"),
         "insurance_info": u.get("insurance_info"),
+        "favorite_listing_ids": u.get("favorite_listing_ids", []),
     }
 
 
@@ -291,7 +309,7 @@ def require(*roles: str):
 async def get_settings() -> dict:
     s = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not s:
-        s = {"id": "global", "commission_rate": 0.15}
+        s = {"id": "global", "commission_rate": 0.05}
         await db.settings.insert_one(dict(s))
     return s
 
@@ -678,10 +696,62 @@ async def list_listings(
     return items
 
 
+@api.post("/listings/{lid}/favorite")
+async def add_favorite(lid: str, user: dict = Depends(get_current_user)):
+    listing = await db.listings.find_one({"id": lid, "deleted_at": None}, {"_id": 0, "id": 1})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"favorite_listing_ids": lid}})
+    return {"ok": True}
+
+
+@api.delete("/listings/{lid}/favorite")
+async def remove_favorite(lid: str, user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$pull": {"favorite_listing_ids": lid}})
+    return {"ok": True}
+
+
+@api.get("/favorites")
+async def list_favorites(user: dict = Depends(get_current_user)):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "favorite_listing_ids": 1})
+    ids = (fresh or {}).get("favorite_listing_ids") or []
+    items = await db.listings.find(
+        {"id": {"$in": ids}, "deleted_at": None},
+        {"_id": 0, "pickup_address": 0, "pickup_instructions": 0, "access_code": 0},
+    ).to_list(200)
+    return items
+
+
 @api.get("/listings/mine")
 async def my_listings(user: dict = Depends(require("owner", "admin"))):
     items = await db.listings.find({"owner_id": user["id"], "deleted_at": None}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return items
+
+
+@api.get("/owner/fleet-summary")
+async def owner_fleet_summary(user: dict = Depends(require("owner", "admin"))):
+    """Per-rig breakdown for the fleet dashboard: earnings, trip count, and a
+    rough 30-day utilization estimate for each listing this owner has."""
+    listings = await db.listings.find({"owner_id": user["id"], "deleted_at": None}, {"_id": 0}).to_list(200)
+    summary = []
+    for l in listings:
+        bookings = await db.bookings.find({"listing_id": l["id"]}, {"_id": 0}).to_list(500)
+        earning_bookings = [b for b in bookings if b["status"] in ("active", "completed")]
+        total_earnings = round(sum(b.get("owner_earnings", 0) or 0 for b in earning_bookings), 2)
+        booked_days = sum(b.get("estimated_days", 1) or 1 for b in earning_bookings)
+        utilization_pct = min(100, round((booked_days / 30) * 100)) if booked_days else 0
+        upcoming = [b for b in bookings if b["status"] in ("approved", "active")]
+        summary.append({
+            "listing_id": l["id"],
+            "title": l["title"],
+            "photo": l["photos"][0] if l.get("photos") else None,
+            "total_earnings": total_earnings,
+            "total_trips": len(earning_bookings),
+            "utilization_pct": utilization_pct,
+            "upcoming_count": len(upcoming),
+        })
+    summary.sort(key=lambda s: s["total_earnings"], reverse=True)
+    return summary
 
 
 @api.get("/listings/{lid}/availability")
@@ -741,7 +811,28 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     settings = await get_settings()
     rate = settings["commission_rate"]
     ppm = listing.get("price_per_mile") or 0
-    subtotal = round(ppm * data.estimated_miles, 2)
+    daily_rate = listing.get("daily_rate") or 0
+    included_per_day = listing.get("included_miles_per_day")
+    days = estimated_trip_days(data.start_date, data.end_date)
+
+    if daily_rate and included_per_day:
+        # Hybrid pricing: a day rate covering a mileage allowance, plus an
+        # estimated overage charge if the planned trip exceeds it. The
+        # overage is an ESTIMATE at booking time — the real amount is
+        # settled against actual odometer readings after the trip.
+        included_miles = included_per_day * days
+        est_overage_miles = max(0, data.estimated_miles - included_miles)
+        base_charge = round(daily_rate * days, 2)
+        est_overage_charge = round(est_overage_miles * ppm, 2)
+        subtotal = round(base_charge + est_overage_charge, 2)
+    else:
+        # Backward compatible: listings without hybrid pricing set just
+        # charge pure per-mile, same as before.
+        included_miles = None
+        base_charge = 0
+        est_overage_charge = 0
+        subtotal = round(ppm * data.estimated_miles, 2)
+
     app_cut = round(subtotal * rate, 2)
     owner_earnings = round(subtotal - app_cut, 2)
 
@@ -755,6 +846,12 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         "renter_name": user["name"],
         **data.dict(),
         "price_per_mile": ppm,
+        "daily_rate": daily_rate,
+        "estimated_days": days,
+        "included_miles": included_miles,
+        "base_charge": base_charge,
+        "estimated_overage_charge": est_overage_charge,
+        "refuel_fee": listing.get("refuel_fee"),
         "subtotal": subtotal,
         "commission_rate": rate,
         "app_cut": app_cut,
@@ -762,6 +859,13 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         "status": "pending",
         "reviewed": False,
         "inspections": [],
+        "extra_charges": [],
+        # Snapshotted from the listing at booking time, so geofencing can prompt
+        # the renter without needing a separate listing lookup later.
+        "pickup_latitude": listing.get("latitude"),
+        "pickup_longitude": listing.get("longitude"),
+        "return_latitude": listing.get("latitude") if data.return_same_location else None,
+        "return_longitude": listing.get("longitude") if data.return_same_location else None,
         "created_at": now_iso(),
     }
     await db.bookings.insert_one(dict(booking))
@@ -793,6 +897,10 @@ async def my_bookings(user: dict = Depends(get_current_user)):
 @api.get("/bookings/incoming")
 async def incoming_bookings(user: dict = Depends(require("owner", "admin"))):
     items = await db.bookings.find({"owner_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    if user["role"] != "admin":
+        for b in items:
+            b.pop("app_cut", None)
+            b.pop("commission_rate", None)
     return items
 
 
@@ -803,6 +911,10 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Booking not found")
     if user["id"] == item["renter_id"] and user["role"] != "admin":
         item = strip_fee(item)
+    elif user["role"] != "admin":
+        # Owners see their own payout but never the platform's exact cut or rate.
+        item.pop("app_cut", None)
+        item.pop("commission_rate", None)
 
     # Exact pickup address/instructions/access code are only revealed once the
     # owner has approved the booking — not while it's still just pending.
@@ -890,6 +1002,9 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
         await notify(item["owner_id"], "Rig picked up", f"{item['renter_name']} picked up {title}. The trip has started.", "trip_started", {"booking_id": bid})
     elif target == "completed":
         await notify(item["renter_id"], "Trip completed", f"Your trip with {title} is complete. Safe travels!", "trip_completed", {"booking_id": bid})
+        fresh_booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
+        if fresh_booking:
+            await charge_trip_extras(fresh_booking)
     elif target == "cancelled":
         other = item["renter_id"] if user["id"] == item["owner_id"] else item["owner_id"]
         msg = f"The booking for {title} was cancelled."
@@ -899,6 +1014,92 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
         if refund_info and refund_info["refund_amount"]:
             await notify(item["renter_id"], "Refund issued", f"${refund_info['refund_amount']} refunded for {title}.", "refund_issued", {"booking_id": bid})
     return {"ok": True, "status": target, **({"refund": refund_info} if refund_info else {})}
+
+
+FUEL_ORDER = {"empty": 0, "1/4": 1, "1/2": 2, "3/4": 3, "full": 4}
+
+
+async def charge_trip_extras(booking: dict):
+    """Called when a trip is marked completed. Charges the renter's saved
+    card for any real mileage overage (beyond the listing's included
+    allowance) and a flat refuel fee if it came back with less fuel than it
+    left with. Best-effort — a failed charge never blocks completion."""
+    charges = []
+
+    miles_driven = booking.get("miles_driven")
+    included_miles = booking.get("included_miles")
+    ppm = booking.get("price_per_mile") or 0
+    if miles_driven is not None and included_miles is not None:
+        real_overage_miles = max(0, miles_driven - included_miles)
+        if real_overage_miles > 0 and ppm > 0:
+            charges.append({"label": f"{real_overage_miles} mi over the included allowance", "amount": round(real_overage_miles * ppm, 2)})
+
+    inspections = booking.get("inspections", [])
+    before = next((i for i in inspections if i["phase"] == "before" and i.get("fuel_level")), None)
+    after = next((i for i in inspections if i["phase"] == "after" and i.get("fuel_level")), None)
+    refuel_fee = booking.get("refuel_fee")
+    if before and after and refuel_fee:
+        if FUEL_ORDER.get(after["fuel_level"], 4) < FUEL_ORDER.get(before["fuel_level"], 4):
+            charges.append({"label": "Refueling fee (returned with less fuel)", "amount": refuel_fee})
+
+    if not charges:
+        return None
+
+    total = round(sum(c["amount"] for c in charges), 2)
+    total_cents = int(round(total * 100))
+
+    customer_id = booking.get("stripe_customer_id")
+    payment_method_id = booking.get("stripe_payment_method_id")
+    if not STRIPE_SECRET_KEY or not customer_id or not payment_method_id:
+        await notify(
+            booking["owner_id"],
+            "Extra charges couldn't be billed automatically",
+            f"{booking['listing_title']} has ${total} in mileage/fuel charges, but no saved payment method to charge. Contact the renter directly.",
+            "extra_charge_failed",
+            {"booking_id": booking["id"]},
+        )
+        return {"charges": charges, "total": total, "billed": False}
+
+    settings = await get_settings()
+    app_fee_cents = int(round(total_cents * settings["commission_rate"]))
+
+    owner_user = await db.users.find_one({"id": booking["owner_id"]}, {"_id": 0, "stripe_account_id": 1})
+    owner_stripe_account = (owner_user or {}).get("stripe_account_id")
+    if not owner_stripe_account:
+        return {"charges": charges, "total": total, "billed": False}
+
+    def _charge():
+        return stripe.PaymentIntent.create(
+            amount=total_cents,
+            currency="usd",
+            customer=customer_id,
+            payment_method=payment_method_id,
+            off_session=True,
+            confirm=True,
+            application_fee_amount=app_fee_cents,
+            transfer_data={"destination": owner_stripe_account},
+            metadata={"booking_id": booking["id"], "kind": "trip_extras"},
+        )
+
+    try:
+        pi = await run_in_threadpool(_charge)
+        billed = pi.get("status") == "succeeded"
+    except Exception as e:
+        logger.error(f"extra charge failed: {e}")
+        billed = False
+
+    await db.bookings.update_one(
+        {"id": booking["id"]},
+        {"$push": {"extra_charges": {"charges": charges, "total": total, "billed": billed, "at": now_iso()}}},
+    )
+
+    if billed:
+        await notify(booking["renter_id"], "Extra charges billed", f"${total} charged for {booking['listing_title']} (mileage/fuel).", "extra_charge_billed", {"booking_id": booking["id"]})
+        await notify(booking["owner_id"], "Extra charges billed", f"${total} in mileage/fuel charges billed for {booking['listing_title']}.", "extra_charge_billed", {"booking_id": booking["id"]})
+    else:
+        await notify(booking["owner_id"], "Extra charge failed", f"${total} in mileage/fuel charges for {booking['listing_title']} couldn't be billed \u2014 the card may have been declined. Contact the renter directly.", "extra_charge_failed", {"booking_id": booking["id"]})
+
+    return {"charges": charges, "total": total, "billed": billed}
 
 
 @api.post("/bookings/{bid}/inspection")
@@ -1055,6 +1256,7 @@ async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
         return stripe.checkout.Session.create(
             mode="payment",
             payment_method_types=["card"],
+            customer_creation="always",
             line_items=[{
                 "price_data": {
                     "currency": "usd",
@@ -1066,6 +1268,7 @@ async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
             payment_intent_data={
                 "application_fee_amount": app_cut_cents,
                 "transfer_data": {"destination": owner_acct},
+                "setup_future_usage": "off_session",
             },
             success_url=f"{FRONTEND_URL}/booking/{bid}?paid=1",
             cancel_url=f"{FRONTEND_URL}/booking/{bid}",
@@ -1100,13 +1303,28 @@ async def stripe_webhook(request: Request):
         session = event["data"]["object"]
         bid = (session.get("metadata") or {}).get("booking_id")
         if bid:
+            pi_id = session.get("payment_intent")
+
+            def _get_payment_method():
+                pi = stripe.PaymentIntent.retrieve(pi_id)
+                return pi.get("payment_method")
+
+            payment_method_id = None
+            if pi_id:
+                try:
+                    payment_method_id = await run_in_threadpool(_get_payment_method)
+                except Exception as e:
+                    logger.error(f"could not retrieve payment method: {e}")
+
             await db.bookings.update_one(
                 {"id": bid},
                 {"$set": {
                     "status": "active",
                     "paid": True,
                     "paid_at": now_iso(),
-                    "payment_intent_id": session.get("payment_intent"),
+                    "payment_intent_id": pi_id,
+                    "stripe_customer_id": session.get("customer"),
+                    "stripe_payment_method_id": payment_method_id,
                 }},
             )
             booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
@@ -1127,7 +1345,7 @@ async def cancellation_policies():
 
 
 @api.get("/settings")
-async def settings_get():
+async def settings_get(user: dict = Depends(require("admin"))):
     s = await get_settings()
     return {"commission_rate": s["commission_rate"]}
 
