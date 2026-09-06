@@ -11,7 +11,7 @@ import { Txt, Display, Field, Chip, Icon, Loader, EmptyState, Badge } from "@/sr
 import NotificationBell from "@/src/components/NotificationBell";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
 
-const CATS = ["All", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Flatbed", "Reefer", "Dry Van", "Lowboy"];
+const CATS = ["All", "Sleeper", "Day Cab", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Tow Truck", "Cab & Chassis", "Flatbed", "Reefer", "Dry Van", "Lowboy"];
 const SORTS: { key: string; label: string; icon: string }[] = [
   { key: "newest", label: "Newest", icon: "clock-outline" },
   { key: "near_me", label: "Near Me", icon: "crosshairs-gps" },
@@ -22,14 +22,30 @@ const SORTS: { key: string; label: string; icon: string }[] = [
 
 type Listing = {
   id: string; title: string; kind: string; category: string; location: string;
-  price_per_mile: number; year?: number; make?: string; capacity?: string; photos: string[];
+  price_per_mile: number; daily_rate?: number; year?: number; make?: string; capacity?: string; mileage?: number; photos: string[];
   rating?: number; rating_count?: number; distance_mi?: number;
 };
 
 export default function Market() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+  const [favorites, setFavorites] = useState<string[]>((user as any)?.favorite_listing_ids || []);
+
+  useFocusEffect(useCallback(() => {
+    setFavorites((user as any)?.favorite_listing_ids || []);
+  }, [user]));
+
+  const toggleFavorite = async (lid: string) => {
+    const isFav = favorites.includes(lid);
+    setFavorites((f) => (isFav ? f.filter((x) => x !== lid) : [...f, lid])); // optimistic
+    try {
+      await apiFetch(`/listings/${lid}/favorite`, { method: isFav ? "DELETE" : "POST" });
+      refresh();
+    } catch {
+      setFavorites((f) => (isFav ? [...f, lid] : f.filter((x) => x !== lid))); // revert on failure
+    }
+  };
   const [cat, setCat] = useState("All");
   const [sort, setSort] = useState("newest");
   const [q, setQ] = useState("");
@@ -88,7 +104,7 @@ export default function Market() {
       <LinearGradient colors={["transparent", colors.scrim]} style={styles.cardScrim} />
       <View style={styles.cardTopRow}>
         <Badge label={item.kind} tone="muted" />
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
           {item.rating_count ? (
             <View style={styles.ratingPill}>
               <Icon name="star" size={12} color={colors.warning} />
@@ -96,11 +112,26 @@ export default function Market() {
             </View>
           ) : null}
           <Badge label={item.category} tone="brand" />
+          <Pressable
+            testID={`favorite-${item.id}`}
+            onPress={(e) => { e.stopPropagation(); toggleFavorite(item.id); }}
+            style={styles.favoriteBtn}
+            hitSlop={8}
+          >
+            <Icon name={favorites.includes(item.id) ? "heart" : "heart-outline"} size={18} color={favorites.includes(item.id) ? colors.error : colors.onScrim} />
+          </Pressable>
         </View>
       </View>
       <View style={styles.cardBottom}>
         <Display size={type.xl} numberOfLines={1} color={colors.onScrim}>{item.title}</Display>
         <View style={styles.metaRow}>
+          {item.mileage != null ? (
+            <>
+              <Icon name="counter" size={14} color={colors.onScrimSecondary} />
+              <Txt size={type.sm} weight="bold" color={colors.onScrim}>{item.mileage.toLocaleString()} mi</Txt>
+              <Txt size={type.sm} color={colors.onScrimSecondary}> · </Txt>
+            </>
+          ) : null}
           <Icon name="map-marker" size={14} color={colors.onScrimSecondary} />
           <Txt size={type.sm} color={colors.onScrimSecondary}>{item.distance_mi != null ? `${item.distance_mi} mi away` : item.location}</Txt>
           {item.capacity ? (
@@ -111,7 +142,7 @@ export default function Market() {
           ) : null}
         </View>
         <View style={styles.priceTag}>
-          <Text2 rate={item.price_per_mile} />
+          <Text2 rate={item.price_per_mile} dailyRate={item.daily_rate} />
         </View>
       </View>
     </Pressable>
@@ -181,7 +212,15 @@ export default function Market() {
   );
 }
 
-function Text2({ rate }: { rate: number }) {
+function Text2({ rate, dailyRate }: { rate: number; dailyRate?: number }) {
+  if (dailyRate) {
+    return (
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 2 }}>
+        <Display size={type.xl} color={colors.brand}>${dailyRate.toFixed(0)}</Display>
+        <Txt size={type.sm} color={colors.onScrimSecondary}>/day</Txt>
+      </View>
+    );
+  }
   return (
     <View style={{ flexDirection: "row", alignItems: "baseline", gap: 2 }}>
       <Display size={type.xl} color={colors.brand}>${rate?.toFixed(2)}</Display>
@@ -205,6 +244,7 @@ const styles = StyleSheet.create({
   cardImg: { ...StyleSheet.absoluteFillObject },
   cardScrim: { position: "absolute", left: 0, right: 0, bottom: 0, height: "70%" },
   cardTopRow: { flexDirection: "row", justifyContent: "space-between", padding: spacing.md },
+  favoriteBtn: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center" },
   cardBottom: { position: "absolute", left: 0, right: 0, bottom: 0, padding: spacing.lg, gap: 4 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   priceTag: {
