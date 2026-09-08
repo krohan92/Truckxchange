@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
+import { useRouter } from "expo-router";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 
@@ -19,6 +20,23 @@ Notifications.setNotificationHandler({
 // Renders nothing — mount it once near the top of the app.
 export function PushRegistrar() {
   const { user } = useAuth();
+  const router = useRouter();
+
+  // Tapping any notification (a push from the backend, or a local geofence
+  // alert) routes to the relevant screen instead of just opening the app.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data: any = response.notification.request.content.data || {};
+      try {
+        if (data.bookingId) router.push(`/booking/${data.bookingId}`);
+        else if (data.booking_id) router.push(`/booking/${data.booking_id}`);
+        else if (data.context_type && data.context_id) router.push(`/messages/${data.context_type}/${data.context_id}`);
+      } catch {
+        // Navigation can fail if the router isn't ready yet — safe to ignore.
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (!user || Platform.OS === "web") return; // Expo push tokens don't apply on web
