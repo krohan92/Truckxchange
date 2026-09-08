@@ -14,12 +14,17 @@ export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
+  const [fleet, setFleet] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const data = await apiFetch<any[]>("/bookings/incoming");
-    setItems(data);
+    const [bookings, fleetSummary] = await Promise.all([
+      apiFetch<any[]>("/bookings/incoming"),
+      apiFetch<any[]>("/owner/fleet-summary").catch(() => []),
+    ]);
+    setItems(bookings);
+    setFleet(fleetSummary);
   }, []);
 
   useFocusEffect(useCallback(() => { setLoading(true); load().finally(() => setLoading(false)); }, [load]));
@@ -33,6 +38,10 @@ export default function Dashboard() {
   const earnings = items.filter((b) => ["approved", "active", "completed"].includes(b.status)).reduce((s, b) => s + b.owner_earnings, 0);
   const pending = items.filter((b) => b.status === "pending").length;
   const active = items.filter((b) => ["approved", "active"].includes(b.status)).length;
+  const upcoming = items
+    .filter((b) => ["approved", "active"].includes(b.status) && b.start_date && b.start_date !== "TBD")
+    .sort((a, b) => (a.start_date > b.start_date ? 1 : -1))
+    .slice(0, 5);
 
   if (loading) return <Loader />;
 
@@ -58,6 +67,46 @@ export default function Dashboard() {
           <Metric label="Pending" value={String(pending)} icon="clock-outline" />
         </View>
       </View>
+
+      <View style={styles.section}>
+        <Display size={type.lg}>YOUR FLEET</Display>
+      </View>
+      {fleet.length === 0 ? null : (
+        <View style={{ paddingHorizontal: spacing.lg, gap: spacing.md, marginBottom: spacing.sm }}>
+          {fleet.map((f) => (
+            <Pressable key={f.listing_id} onPress={() => router.push(`/listing/${f.listing_id}`)} style={styles.fleetRow}>
+              <View style={{ flex: 1 }}>
+                <Txt weight="bold" numberOfLines={1}>{f.title}</Txt>
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>{f.total_trips} trip{f.total_trips === 1 ? "" : "s"} · {f.utilization_pct}% utilized (30d)</Txt>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Display size={type.lg} color={colors.success}>${f.total_earnings.toFixed(0)}</Display>
+                {f.upcoming_count > 0 ? <Txt size={type.sm} color={colors.brand}>{f.upcoming_count} upcoming</Txt> : null}
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {upcoming.length > 0 ? (
+        <>
+          <View style={styles.section}>
+            <Display size={type.lg}>UPCOMING</Display>
+          </View>
+          <View style={{ paddingHorizontal: spacing.lg, gap: spacing.sm, marginBottom: spacing.sm }}>
+            {upcoming.map((b) => (
+              <Pressable key={b.id} onPress={() => router.push(`/booking/${b.id}`)} style={styles.upcomingRow}>
+                <Icon name={b.status === "active" ? "truck-fast" : "calendar-clock"} size={18} color={colors.brand} />
+                <View style={{ flex: 1 }}>
+                  <Txt size={type.sm} weight="bold" numberOfLines={1}>{b.listing_title}</Txt>
+                  <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.start_date} · {b.renter_name}</Txt>
+                </View>
+                <Badge label={b.status} tone={STATUS_TONE[b.status]} />
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
 
       <View style={styles.section}>
         <Display size={type.lg}>INCOMING BOOKINGS</Display>
@@ -114,4 +163,6 @@ const styles = StyleSheet.create({
   metrics: { flexDirection: "row", gap: spacing.md, paddingHorizontal: spacing.lg },
   metric: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.sm },
   section: { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: spacing.sm },
+  fleetRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
+  upcomingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.sm },
 });
