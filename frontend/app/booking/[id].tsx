@@ -168,13 +168,43 @@ export default function BookingDetail() {
             <Icon name="cash" size={18} color={colors.brand} />
             <Display size={type.lg}>{isOwner ? "YOUR PAYOUT" : "TRIP COST"}</Display>
           </View>
-          <Row label={`${(b.estimated_miles || 0).toLocaleString()} mi × $${(b.price_per_mile || 0).toFixed(2)}/mi`} value={`$${b.subtotal}`} />
           {isOwner ? (
-            <Row label="You earn" value={`$${b.owner_earnings}`} tone={colors.success} />
+            <>
+              <Row label="Estimated distance" value={`${(b.estimated_miles || 0).toLocaleString()} mi`} />
+              <Row label="You earn" value={`$${b.owner_earnings}`} tone={colors.success} />
+            </>
+          ) : b.daily_rate ? (
+            <>
+              <Row label={`${b.estimated_days || 1} day${(b.estimated_days || 1) > 1 ? "s" : ""} × $${b.daily_rate}/day`} value={`$${b.base_charge}`} />
+              {b.estimated_overage_charge > 0 ? (
+                <Row label={`Est. overage (beyond ${(b.included_miles || 0).toLocaleString()} mi included)`} value={`$${b.estimated_overage_charge}`} />
+              ) : null}
+              <Row label="Estimated total" value={`$${b.subtotal}`} tone={colors.brand} />
+              {b.refuel_fee ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>Plus a ${b.refuel_fee} refuel fee if returned with less fuel than it left with.</Txt> : null}
+            </>
           ) : (
-            <Row label="Estimated total" value={`$${b.subtotal}`} tone={colors.brand} />
+            <>
+              <Row label={`${(b.estimated_miles || 0).toLocaleString()} mi × $${(b.price_per_mile || 0).toFixed(2)}/mi`} value={`$${b.subtotal}`} />
+              <Row label="Estimated total" value={`$${b.subtotal}`} tone={colors.brand} />
+            </>
           )}
         </Card>
+
+        {b.extra_charges && b.extra_charges.length > 0 ? (
+          <Card style={{ gap: spacing.sm }}>
+            <Display size={type.lg}>EXTRA CHARGES</Display>
+            {b.extra_charges.map((ec: any, i: number) => (
+              <View key={i} style={{ gap: 4 }}>
+                {ec.charges.map((c: any, j: number) => (
+                  <Row key={j} label={c.label} value={`$${c.amount}`} />
+                ))}
+                <Txt size={type.sm} color={ec.billed ? colors.success : colors.error}>
+                  {ec.billed ? `$${ec.total} billed successfully` : `$${ec.total} could not be billed automatically`}
+                </Txt>
+              </View>
+            ))}
+          </Card>
+        ) : null}
 
         <Card style={{ gap: spacing.md }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
