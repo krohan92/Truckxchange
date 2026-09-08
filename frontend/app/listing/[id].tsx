@@ -23,7 +23,24 @@ export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
+
+  const toggleFavorite = async () => {
+    if (!id) return;
+    const next = !isFavorite;
+    setIsFavorite(next); // optimistic
+    setFavBusy(true);
+    try {
+      await apiFetch(`/listings/${id}/favorite`, { method: next ? "POST" : "DELETE" });
+      refresh();
+    } catch {
+      setIsFavorite(!next);
+    } finally {
+      setFavBusy(false);
+    }
+  };
   const [listing, setListing] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -45,6 +62,7 @@ export default function ListingDetail() {
 
   useFocusEffect(
     useCallback(() => {
+      setIsFavorite(((user as any)?.favorite_listing_ids || []).includes(id));
       setLoading(true);
       Promise.all([
         apiFetch(`/listings/${id}`, { auth: false }),
@@ -129,6 +147,11 @@ export default function ListingDetail() {
           <Pressable testID="back-btn" onPress={() => router.back()} style={[styles.backBtn, { top: insets.top + spacing.sm }]}>
             <Icon name="chevron-left" size={26} color={colors.onScrim} />
           </Pressable>
+          {user ? (
+            <Pressable testID="favorite-btn" onPress={toggleFavorite} disabled={favBusy} style={[styles.backBtn, { top: insets.top + spacing.sm, right: spacing.lg, left: undefined }]}>
+              <Icon name={isFavorite ? "heart" : "heart-outline"} size={22} color={isFavorite ? colors.error : colors.onScrim} />
+            </Pressable>
+          ) : null}
           {listing.photos?.length > 1 ? (
             <View style={styles.dots}>
               {listing.photos.map((_: string, i: number) => (
@@ -153,6 +176,7 @@ export default function ListingDetail() {
             {[
               ["calendar", "Year", listing.year || "—"],
               ["factory", "Make", listing.make || "—"],
+              ["counter", "Mileage", listing.mileage != null ? `${listing.mileage.toLocaleString()} mi` : "—"],
               ["weight", "Capacity", listing.capacity || "—"],
             ].map(([ic, label, val]) => (
               <View key={label as string} style={styles.spec}>
@@ -337,8 +361,8 @@ const styles = StyleSheet.create({
   dotActive: { backgroundColor: colors.brand, width: 18 },
   body: { padding: spacing.lg, gap: spacing.md, marginTop: -spacing.xxl },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  specGrid: { flexDirection: "row", gap: spacing.md },
-  spec: { flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: 4 },
+  specGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  spec: { flexBasis: "47%", flexGrow: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: 4 },
   splitBar: { flexDirection: "row", height: 12, borderRadius: radius.pill, overflow: "hidden", backgroundColor: colors.surfaceTertiary },
   barOwner: { backgroundColor: colors.success },
   barApp: { backgroundColor: colors.brand },
