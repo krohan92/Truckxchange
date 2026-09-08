@@ -10,7 +10,7 @@ import { apiFetch, uploadFile, fileUrl } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
-const TRUCK_CATS = ["Semi", "Box", "Flatbed Truck", "Dump Truck"];
+const TRUCK_CATS = ["Sleeper", "Day Cab", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Tow Truck", "Cab & Chassis"];
 const TRAILER_CATS = ["Flatbed", "Reefer", "Dry Van", "Lowboy"];
 
 export default function CreateListing() {
@@ -48,9 +48,13 @@ export default function CreateListing() {
     }
   };
   const [rate, setRate] = useState("");
+  const [dailyRateInput, setDailyRateInput] = useState("");
+  const [includedMiles, setIncludedMiles] = useState("");
+  const [refuelFee, setRefuelFee] = useState("");
   const [year, setYear] = useState("");
   const [make, setMake] = useState("");
   const [capacity, setCapacity] = useState("");
+  const [mileage, setMileage] = useState("");
   const [description, setDescription] = useState("");
   const [dot, setDot] = useState("");
   const [pickupAddress, setPickupAddress] = useState("");
@@ -119,8 +123,12 @@ export default function CreateListing() {
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
           price_per_mile: parseFloat(rate) || 0,
+          daily_rate: dailyRateInput ? parseFloat(dailyRateInput) : 0,
+          included_miles_per_day: includedMiles ? parseFloat(includedMiles) : null,
+          refuel_fee: refuelFee ? parseFloat(refuelFee) : null,
           year: year ? parseInt(year, 10) : null,
           make, capacity, description,
+          mileage: mileage ? parseInt(mileage.replace(/,/g, ""), 10) : null,
           photos,
           pickup_address: pickupAddress,
           pickup_instructions: pickupInstructions,
@@ -179,9 +187,15 @@ export default function CreateListing() {
 
         <Field label="Title" placeholder="e.g. Freightliner Cascadia Sleeper" value={title} onChangeText={setTitle} testID="input-title" />
         <View style={{ flexDirection: "row", gap: spacing.md }}>
-          <View style={{ flex: 1 }}><Field label="Price / mile ($)" placeholder="2.20" keyboardType="decimal-pad" value={rate} onChangeText={setRate} testID="input-rate" /></View>
+          <View style={{ flex: 1 }}><Field label="Daily rate ($)" placeholder="320" keyboardType="decimal-pad" value={dailyRateInput} onChangeText={setDailyRateInput} testID="input-daily-rate" /></View>
+          <View style={{ flex: 1 }}><Field label="Included miles/day" placeholder="500" keyboardType="number-pad" value={includedMiles} onChangeText={setIncludedMiles} testID="input-included-miles" /></View>
+        </View>
+        <View style={{ flexDirection: "row", gap: spacing.md }}>
+          <View style={{ flex: 1 }}><Field label="Overage rate ($/mi)" placeholder="2.20" keyboardType="decimal-pad" value={rate} onChangeText={setRate} testID="input-rate" /></View>
           <View style={{ flex: 1 }}><Field label="Year" placeholder="2022" keyboardType="number-pad" value={year} onChangeText={setYear} /></View>
         </View>
+        <Field label="Refuel fee ($, optional)" placeholder="75" keyboardType="decimal-pad" value={refuelFee} onChangeText={setRefuelFee} testID="input-refuel-fee" />
+        <Txt size={type.sm} color={colors.onSurfaceSecondary}>Charged automatically if the rig comes back with less fuel than it left with.</Txt>
         <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-end" }}>
           <View style={{ flex: 1 }}><Field label="Location" placeholder="City, State" value={location} onChangeText={setLocation} testID="input-location" /></View>
           <Btn title={locBusy ? "Locating…" : "Use My Location"} variant="secondary" icon="crosshairs-gps" onPress={useCurrentLocation} loading={locBusy} />
@@ -209,6 +223,7 @@ export default function CreateListing() {
           <View style={{ flex: 1 }}><Field label="Make" placeholder="Freightliner" value={make} onChangeText={setMake} /></View>
           <View style={{ flex: 1 }}><Field label="Capacity" placeholder="80,000 lb" value={capacity} onChangeText={setCapacity} /></View>
         </View>
+        <Field label="Current mileage" placeholder="e.g. 450,000" keyboardType="number-pad" value={mileage} onChangeText={setMileage} />
         <Field label="Description" placeholder="Condition, features, extras…" value={description} onChangeText={setDescription} multiline />
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm }}>
