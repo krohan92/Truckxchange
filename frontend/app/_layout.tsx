@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Stack } from "expo-router";
 import { LogBox, View, Platform, useWindowDimensions } from "react-native";
 import { useFonts } from "expo-font";
@@ -9,6 +9,8 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { PushRegistrar } from "@/src/hooks/usePushRegistration";
 import { colors } from "@/src/theme";
+import "@/src/i18n";
+import { initLanguage } from "@/src/i18n";
 
 LogBox.ignoreAllLogs(true);
 
@@ -53,8 +55,13 @@ export default function RootLayout() {
     "Manrope": require("../assets/fonts/Manrope-Var.ttf"),
     "MaterialDesignIcons": require("@react-native-vector-icons/material-design-icons/fonts/MaterialDesignIcons.ttf"),
   });
+  const [langLoaded, setLangLoaded] = useState(false);
 
-  if (!loaded) {
+  useEffect(() => {
+    initLanguage().finally(() => setLangLoaded(true));
+  }, []);
+
+  if (!loaded || !langLoaded) {
     return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
   }
 
