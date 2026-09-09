@@ -1,0 +1,32 @@
+{
+  "auth": {
+    "welcomeBack": "Welcome back",
+    "joinFleet": "Join the fleet",
+    "signInSubtitle": "Sign in to book or manage your rigs",
+    "registerSubtitle": "Rent, list, or service heavy machinery",
+    "signIn": "Sign In",
+    "createAccount": "Create Account",
+    "iAmA": "I am a",
+    "roleTrucker": "Trucker",
+    "roleTruckerDesc": "Rent trucks & trailers",
+    "roleOwner": "Owner",
+    "roleOwnerDesc": "List your rigs, earn",
+    "roleVendor": "Service Co.",
+    "roleVendorDesc": "Bid on tow & repair jobs",
+    "roleAdmin": "Admin",
+    "fullName": "Full name",
+    "fullNamePlaceholder": "John Trucker",
+    "email": "Email",
+    "emailPlaceholder": "you@example.com",
+    "password": "Password",
+    "quickTestAccess": "quick test access",
+    "errorEnterName": "Please enter your name",
+    "errorGeneric": "Failed"
+  },
+  "language": {
+    "title": "Language",
+    "english": "English",
+    "spanish": "Español",
+    "punjabi": "ਪੰਜਾਬੀ"
+  }
+}
