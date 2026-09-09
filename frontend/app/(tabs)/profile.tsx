@@ -4,6 +4,8 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
+import { useTranslation } from "react-i18next";
+import { setLanguage, SupportedLanguage } from "@/src/i18n";
 import { Txt, Display, Icon, Card, Badge, Btn } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
@@ -12,6 +14,7 @@ const ROLE_LABEL: any = { renter: "Trucker", owner: "Fleet Owner", vendor: "Serv
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { t, i18n } = useTranslation();
   const { user, logout, refresh } = useAuth();
   const [rate, setRate] = useState(0.05);
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
@@ -115,6 +118,24 @@ export default function Profile() {
           </Card>
         )}
 
+        <Card style={{ gap: spacing.md }}>
+          <Display size={type.lg}>{t("language.title")}</Display>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            {(["en", "es", "pa"] as SupportedLanguage[]).map((lang) => (
+              <Pressable
+                key={lang}
+                testID={`profile-lang-${lang}`}
+                onPress={() => setLanguage(lang)}
+                style={[styles.langChip, i18n.language === lang && styles.langChipActive]}
+              >
+                <Txt weight="bold" color={i18n.language === lang ? colors.onBrand : colors.onSurfaceSecondary}>
+                  {lang === "en" ? t("language.english") : lang === "es" ? t("language.spanish") : t("language.punjabi")}
+                </Txt>
+              </Pressable>
+            ))}
+          </View>
+        </Card>
+
         <Btn title="Log Out" icon="logout" variant="ghost" onPress={async () => { await logout(); router.replace("/auth"); }} testID="logout-btn" />
       </View>
     </ScrollView>
@@ -135,6 +156,8 @@ function StatusRow({ label, ok }: { label: string; ok: boolean }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
+  langChip: { flex: 1, alignItems: "center", paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  langChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   header: { alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, borderBottomWidth: 1, borderBottomColor: colors.border },
   avatar: { width: 80, height: 80, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm },
