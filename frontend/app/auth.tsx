@@ -6,6 +6,8 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { useTranslation } from "react-i18next";
+import { setLanguage, SUPPORTED_LANGUAGES, SupportedLanguage } from "@/src/i18n";
 import { useAuth } from "@/src/context/AuthContext";
 import { Btn, Field, Txt, Display, Icon } from "@/src/ui";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
@@ -13,15 +15,10 @@ import { colors, spacing, radius, fonts, type } from "@/src/theme";
 const HERO = "https://images.unsplash.com/photo-1778103617525-76877c583fa5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200";
 const { height } = Dimensions.get("window");
 
-const ROLES = [
-  { key: "renter", label: "Trucker", desc: "Rent trucks & trailers", icon: "steering" },
-  { key: "owner", label: "Owner", desc: "List your rigs, earn", icon: "truck" },
-  { key: "vendor", label: "Service Co.", desc: "Bid on tow & repair jobs", icon: "wrench" },
-];
-
 export default function Auth() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { t, i18n } = useTranslation();
   const { login, register, loginAs } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [role, setRole] = useState("renter");
@@ -31,6 +28,12 @@ export default function Auth() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const ROLES = [
+    { key: "renter", label: t("auth.roleTrucker"), desc: t("auth.roleTruckerDesc"), icon: "steering" },
+    { key: "owner", label: t("auth.roleOwner"), desc: t("auth.roleOwnerDesc"), icon: "truck" },
+    { key: "vendor", label: t("auth.roleVendor"), desc: t("auth.roleVendorDesc"), icon: "wrench" },
+  ];
+
   const quick = async (r: "renter" | "owner" | "vendor" | "admin") => {
     setError("");
     setBusy(true);
@@ -39,7 +42,7 @@ export default function Auth() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message || "Failed");
+      setError(e.message || t("auth.errorGeneric"));
     } finally {
       setBusy(false);
     }
@@ -52,13 +55,13 @@ export default function Auth() {
       if (mode === "login") {
         await login(email.trim(), password);
       } else {
-        if (!name.trim()) throw new Error("Please enter your name");
+        if (!name.trim()) throw new Error(t("auth.errorEnterName"));
         await register(name.trim(), email.trim(), password, role);
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message || "Failed");
+      setError(e.message || t("auth.errorGeneric"));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     } finally {
       setBusy(false);
@@ -76,6 +79,20 @@ export default function Auth() {
           </View>
           <Display size={type.xxl} style={{ letterSpacing: 1 }} color={colors.onScrim}>RIGRENT</Display>
         </View>
+        <View style={[styles.langRow, { top: insets.top + spacing.lg }]}>
+          {(["en", "es", "pa"] as SupportedLanguage[]).map((lang) => (
+            <Pressable
+              key={lang}
+              testID={`lang-${lang}`}
+              onPress={() => setLanguage(lang)}
+              style={[styles.langBtn, i18n.language === lang && styles.langBtnActive]}
+            >
+              <Txt size={11} weight="bold" color={i18n.language === lang ? colors.onBrand : colors.onScrim}>
+                {lang === "en" ? "EN" : lang === "es" ? "ES" : "ਪੰ"}
+              </Txt>
+            </Pressable>
+          ))}
+        </View>
       </View>
 
       <KeyboardAwareScrollView
@@ -86,9 +103,9 @@ export default function Auth() {
         showsVerticalScrollIndicator={false}
       >
         <View>
-          <Display size={type.huge}>{mode === "login" ? "Welcome back" : "Join the fleet"}</Display>
+          <Display size={type.huge}>{mode === "login" ? t("auth.welcomeBack") : t("auth.joinFleet")}</Display>
           <Txt color={colors.onSurfaceSecondary} style={{ marginTop: 4 }}>
-            {mode === "login" ? "Sign in to book or manage your rigs" : "Rent, list, or service heavy machinery"}
+            {mode === "login" ? t("auth.signInSubtitle") : t("auth.registerSubtitle")}
           </Txt>
         </View>
 
@@ -96,7 +113,7 @@ export default function Auth() {
           {(["login", "register"] as const).map((m) => (
             <Pressable key={m} testID={`mode-${m}`} onPress={() => setMode(m)} style={[styles.toggleBtn, mode === m && styles.toggleActive]}>
               <Txt weight="bold" color={mode === m ? colors.onBrand : colors.onSurfaceSecondary}>
-                {m === "login" ? "Sign In" : "Create Account"}
+                {m === "login" ? t("auth.signIn") : t("auth.createAccount")}
               </Txt>
             </Pressable>
           ))}
@@ -104,7 +121,7 @@ export default function Auth() {
 
         {mode === "register" && (
           <View style={{ gap: spacing.sm }}>
-            <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium">I am a</Txt>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium">{t("auth.iAmA")}</Txt>
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               {ROLES.map((r) => (
                 <Pressable
@@ -126,10 +143,10 @@ export default function Auth() {
         )}
 
         {mode === "register" && (
-          <Field label="Full name" placeholder="John Trucker" value={name} onChangeText={setName} testID="input-name" />
+          <Field label={t("auth.fullName")} placeholder={t("auth.fullNamePlaceholder")} value={name} onChangeText={setName} testID="input-name" />
         )}
-        <Field label="Email" placeholder="you@example.com" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} testID="input-email" />
-        <Field label="Password" placeholder="••••••••" secureTextEntry value={password} onChangeText={setPassword} testID="input-password" />
+        <Field label={t("auth.email")} placeholder={t("auth.emailPlaceholder")} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} testID="input-email" />
+        <Field label={t("auth.password")} placeholder="••••••••" secureTextEntry value={password} onChangeText={setPassword} testID="input-password" />
 
         {error ? (
           <View style={styles.errorBox}>
@@ -138,19 +155,19 @@ export default function Auth() {
           </View>
         ) : null}
 
-        <Btn title={mode === "login" ? "Sign In" : "Create Account"} onPress={submit} loading={busy} testID="submit-auth" />
+        <Btn title={mode === "login" ? t("auth.signIn") : t("auth.createAccount")} onPress={submit} loading={busy} testID="submit-auth" />
 
         <View style={styles.divider}>
           <View style={styles.line} />
-          <Txt size={type.sm} color={colors.onSurfaceSecondary}>quick test access</Txt>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary}>{t("auth.quickTestAccess")}</Txt>
           <View style={styles.line} />
         </View>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
           {[
-            { r: "renter", label: "Trucker", icon: "steering" },
-            { r: "owner", label: "Owner", icon: "truck" },
-            { r: "vendor", label: "Service Co.", icon: "wrench" },
-            { r: "admin", label: "Admin", icon: "shield-account" },
+            { r: "renter", label: t("auth.roleTrucker"), icon: "steering" },
+            { r: "owner", label: t("auth.roleOwner"), icon: "truck" },
+            { r: "vendor", label: t("auth.roleVendor"), icon: "wrench" },
+            { r: "admin", label: t("auth.roleAdmin"), icon: "shield-account" },
           ].map((q) => (
             <Pressable key={q.r} testID={`quick-${q.r}`} onPress={() => quick(q.r as any)} style={styles.quickBtn}>
               <Icon name={q.icon} size={18} color={colors.brand} />
@@ -167,6 +184,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   hero: { height: height * 0.34 },
   brandRow: { position: "absolute", left: spacing.xl, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  langRow: { position: "absolute", right: spacing.xl, flexDirection: "row", gap: 6 },
+  langBtn: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  langBtnActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   logoBadge: { width: 38, height: 38, borderRadius: radius.md, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   sheet: { flex: 1, marginTop: -spacing.xxl },
   toggle: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, borderWidth: 1, borderColor: colors.border },
