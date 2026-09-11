@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Modal, View, StyleSheet, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTranslation } from "react-i18next";
 import { setLanguage, SupportedLanguage } from "@/src/i18n";
 import { Txt, Display, Icon } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
@@ -13,6 +14,7 @@ const OPTIONS: { code: SupportedLanguage; label: string; native: string }[] = [
 
 export default function LanguagePickerModal({ visible, onDone }: { visible: boolean; onDone: () => void }) {
   const insets = useSafeAreaInsets();
+  const { i18n } = useTranslation();
   const [picking, setPicking] = useState<SupportedLanguage | null>(null);
 
   const choose = async (code: SupportedLanguage) => {
@@ -21,10 +23,21 @@ export default function LanguagePickerModal({ visible, onDone }: { visible: bool
     onDone();
   };
 
+  // Dismissing without picking keeps whatever language is already active
+  // (device default or English) and remembers that choice, so the popup
+  // doesn't keep reappearing every time the app opens.
+  const skip = async () => {
+    await setLanguage((i18n.language as SupportedLanguage) || "en");
+    onDone();
+  };
+
   return (
-    <Modal visible={visible} animationType="fade" transparent statusBarTranslucent>
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, { marginBottom: insets.bottom + spacing.xl }]}>
+    <Modal visible={visible} animationType="fade" transparent statusBarTranslucent onRequestClose={skip}>
+      <Pressable style={styles.backdrop} onPress={skip}>
+        <Pressable style={[styles.sheet, { marginBottom: insets.bottom + spacing.xl }]} onPress={(e) => e.stopPropagation()}>
+          <Pressable testID="lang-picker-skip" onPress={skip} style={styles.closeBtn} hitSlop={10}>
+            <Icon name="close" size={18} color={colors.onSurfaceSecondary} />
+          </Pressable>
           <View style={styles.iconWrap}>
             <Icon name="translate" size={26} color={colors.brand} />
           </View>
@@ -44,8 +57,11 @@ export default function LanguagePickerModal({ visible, onDone }: { visible: bool
               {opt.native !== opt.label ? <Txt color={colors.onSurfaceSecondary} size={type.sm}>{opt.label}</Txt> : null}
             </Pressable>
           ))}
-        </View>
-      </View>
+          <Pressable testID="lang-picker-skip-text" onPress={skip} style={{ alignSelf: "center", marginTop: 4 }}>
+            <Txt color={colors.onSurfaceSecondary} size={type.sm}>Skip for now</Txt>
+          </Pressable>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -53,6 +69,7 @@ export default function LanguagePickerModal({ visible, onDone }: { visible: bool
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "flex-end" },
   sheet: { width: "100%", maxWidth: 420, backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.md, alignItems: "stretch" },
+  closeBtn: { position: "absolute", top: spacing.md, right: spacing.md, width: 28, height: 28, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
   iconWrap: { alignSelf: "center", width: 52, height: 52, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 4 },
   option: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center" },
 });
