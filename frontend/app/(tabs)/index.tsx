@@ -30,10 +30,10 @@ export default function Market() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, refresh } = useAuth();
-  const [favorites, setFavorites] = useState<string[]>((user as any)?.favorite_listing_ids || []);
+  const [favorites, setFavorites] = useState<string[]>(user?.favorite_listing_ids || []);
 
   useFocusEffect(useCallback(() => {
-    setFavorites((user as any)?.favorite_listing_ids || []);
+    setFavorites(user?.favorite_listing_ids || []);
   }, [user]));
 
   const toggleFavorite = async (lid: string) => {
