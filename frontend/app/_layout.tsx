@@ -11,6 +11,7 @@ import { PushRegistrar } from "@/src/hooks/usePushRegistration";
 import { colors } from "@/src/theme";
 import "@/src/i18n";
 import { initLanguage } from "@/src/i18n";
+import LanguagePickerModal from "@/src/components/LanguagePickerModal";
 
 LogBox.ignoreAllLogs(true);
 
@@ -56,9 +57,12 @@ export default function RootLayout() {
     "MaterialDesignIcons": require("@react-native-vector-icons/material-design-icons/fonts/MaterialDesignIcons.ttf"),
   });
   const [langLoaded, setLangLoaded] = useState(false);
+  const [showLanguagePicker, setShowLanguagePicker] = useState(false);
 
   useEffect(() => {
-    initLanguage().finally(() => setLangLoaded(true));
+    initLanguage()
+      .then(({ isFirstLaunch }) => setShowLanguagePicker(isFirstLaunch))
+      .finally(() => setLangLoaded(true));
   }, []);
 
   if (!loaded || !langLoaded) {
@@ -72,6 +76,7 @@ export default function RootLayout() {
           <AuthProvider>
             <PushRegistrar />
             <StatusBar style="dark" />
+            <LanguagePickerModal visible={showLanguagePicker} onDone={() => setShowLanguagePicker(false)} />
             <ResponsiveShell>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface }, animation: "slide_from_right" }} />
             </ResponsiveShell>
