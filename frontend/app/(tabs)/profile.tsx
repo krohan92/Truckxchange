@@ -2,11 +2,12 @@ import React, { useCallback, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Location from "expo-location";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SupportedLanguage } from "@/src/i18n";
-import { Txt, Display, Icon, Card, Badge, Btn } from "@/src/ui";
+import { Txt, Display, Icon, Card, Badge, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const ROLE_LABEL: any = { renter: "Trucker", owner: "Fleet Owner", vendor: "Service Company", admin: "Administrator" };
@@ -20,6 +21,9 @@ export default function Profile() {
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
   const [connectBusy, setConnectBusy] = useState(false);
   const [reseedBusy, setReseedBusy] = useState(false);
+  const [serviceRadius, setServiceRadius] = useState("50");
+  const [serviceAreaBusy, setServiceAreaBusy] = useState(false);
+  const [serviceAreaSaved, setServiceAreaSaved] = useState(false);
 
   useFocusEffect(useCallback(() => {
     refresh();
@@ -38,6 +42,7 @@ export default function Profile() {
   if (!user) return null;
   const isRenter = user.role === "renter";
   const isAdmin = user.role === "admin";
+  const isVendor = user.role === "vendor";
   const receivesPayouts = user.role === "owner" || user.role === "vendor";
 
   const connectPayouts = async () => {
@@ -47,6 +52,22 @@ export default function Profile() {
       await Linking.openURL(res.onboarding_url);
     } catch {}
     finally { setConnectBusy(false); }
+  };
+
+  const saveServiceArea = async () => {
+    setServiceAreaBusy(true);
+    setServiceAreaSaved(false);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await apiFetch("/vendor/service-area", {
+        method: "POST",
+        body: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, radius_mi: parseFloat(serviceRadius) || 50 },
+      });
+      setServiceAreaSaved(true);
+    } catch {}
+    finally { setServiceAreaBusy(false); }
   };
 
   return (
@@ -102,6 +123,22 @@ export default function Profile() {
                 finally { setReseedBusy(false); }
               }}
               testID="reseed-listings-btn"
+            />
+          </Card>
+        )}
+
+        {isVendor && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>SERVICE AREA</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Set your base location and how far you'll travel — only roadside jobs within this range will notify you.</Txt>
+            <Field label="Service radius (miles)" placeholder="50" keyboardType="number-pad" value={serviceRadius} onChangeText={setServiceRadius} testID="input-service-radius" />
+            <Btn
+              title={serviceAreaSaved ? "Updated ✓" : "Save Service Area (uses current location)"}
+              icon="crosshairs-gps"
+              variant="secondary"
+              onPress={saveServiceArea}
+              loading={serviceAreaBusy}
+              testID="save-service-area-btn"
             />
           </Card>
         )}
