@@ -1,0 +1,32 @@
+{
+  "auth": {
+    "welcomeBack": "Bienvenido de nuevo",
+    "joinFleet": "Únete a la flota",
+    "signInSubtitle": "Inicia sesión para reservar o administrar tus camiones",
+    "registerSubtitle": "Renta, publica o da servicio a maquinaria pesada",
+    "signIn": "Iniciar sesión",
+    "createAccount": "Crear cuenta",
+    "iAmA": "Soy",
+    "roleTrucker": "Camionero",
+    "roleTruckerDesc": "Renta camiones y remolques",
+    "roleOwner": "Dueño",
+    "roleOwnerDesc": "Publica tus camiones y gana",
+    "roleVendor": "Empresa de servicio",
+    "roleVendorDesc": "Oferta en trabajos de grúa y reparación",
+    "roleAdmin": "Administrador",
+    "fullName": "Nombre completo",
+    "fullNamePlaceholder": "Juan Camionero",
+    "email": "Correo electrónico",
+    "emailPlaceholder": "tu@ejemplo.com",
+    "password": "Contraseña",
+    "quickTestAccess": "acceso rápido de prueba",
+    "errorEnterName": "Por favor ingresa tu nombre",
+    "errorGeneric": "Error"
+  },
+  "language": {
+    "title": "Idioma",
+    "english": "English",
+    "spanish": "Español",
+    "punjabi": "ਪੰਜਾਬੀ"
+  }
+}
