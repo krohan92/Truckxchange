@@ -31,10 +31,13 @@ i18n.use(initReactI18next).init({
 
 // Loads the driver's saved language choice (if any) once on app start.
 // Falls back to the device's own language if it's one we support, else English.
-export async function initLanguage() {
+// Returns whether this was a first-ever launch (no saved preference), so the
+// caller can show a one-time language picker.
+export async function initLanguage(): Promise<{ isFirstLaunch: boolean }> {
   const saved = await storage.getItem<SupportedLanguage | null>("language", null);
   const lang = saved && (SUPPORTED_LANGUAGES as readonly string[]).includes(saved) ? saved : deviceDefaultLanguage();
   await i18n.changeLanguage(lang);
+  return { isFirstLaunch: !saved };
 }
 
 export async function setLanguage(lang: SupportedLanguage) {
