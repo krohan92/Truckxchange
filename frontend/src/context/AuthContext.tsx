@@ -10,6 +10,9 @@ export type User = {
   insurance_verified: boolean;
   license_info?: any;
   insurance_info?: any;
+  favorite_listing_ids?: string[];
+  renter_rating?: number;
+  renter_rating_count?: number;
 };
 
 type AuthCtx = {
