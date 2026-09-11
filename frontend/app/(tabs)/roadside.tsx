@@ -66,7 +66,7 @@ export default function Roadside() {
                 <Display size={type.lg} numberOfLines={1}>{item.title}</Display>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <Icon name="map-marker" size={13} color={colors.onSurfaceSecondary} />
-                  <Txt size={type.sm} color={colors.onSurfaceSecondary} numberOfLines={1}>{item.location}</Txt>
+                  <Txt size={type.sm} color={colors.onSurfaceSecondary} numberOfLines={1}>{item.distance_mi != null ? `${item.distance_mi} mi away` : item.location}</Txt>
                 </View>
                 <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
                   <Badge label={item.status} tone={STATUS_TONE[item.status] || "muted"} />
