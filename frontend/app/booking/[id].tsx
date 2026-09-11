@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, Linking, Alert } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Linking, Alert, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,35 @@ import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field, Chip } from "@/src
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
+
+// Hands off to the device's own Maps app for real turn-by-turn navigation,
+// rather than trying to render our own map. Prefers exact GPS coordinates
+// when we have them, falls back to a text-address search otherwise.
+function openDirections(lat?: number | null, lng?: number | null, address?: string | null) {
+  let url: string;
+  if (lat != null && lng != null) {
+    url =
+      Platform.OS === "ios"
+        ? `maps://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
+        : Platform.OS === "android"
+        ? `google.navigation:q=${lat},${lng}`
+        : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  } else if (address) {
+    const q = encodeURIComponent(address);
+    url =
+      Platform.OS === "ios"
+        ? `maps://maps.apple.com/?daddr=${q}`
+        : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
+  } else {
+    Alert.alert("No location available", "This booking doesn't have a pickup location set yet.");
+    return;
+  }
+  Linking.openURL(url).catch(() => {
+    // Native maps scheme unavailable (e.g. simulator) — fall back to the web version.
+    const q = address ? encodeURIComponent(address) : `${lat},${lng}`;
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`);
+  });
+}
 
 export default function BookingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -141,6 +170,15 @@ export default function BookingDetail() {
           {b.start_date && b.start_date !== "TBD" ? <Row label="Dates" value={`${b.start_date} – ${b.end_date}`} /> : null}
           <Row label="Load" value={b.load_type + (b.load_weight ? ` · ${b.load_weight}` : "")} />
           <Row label="Rig return" value={b.return_same_location ? "Same pickup location" : (b.return_location_note || "Different location (see notes)")} tone={b.return_same_location ? undefined : colors.warning} />
+          {b.status === "active" && (b.return_latitude != null || b.return_location_note) ? (
+            <Btn
+              title="Get Directions to Return"
+              icon="navigation"
+              variant="ghost"
+              onPress={() => openDirections(b.return_latitude, b.return_longitude, b.return_location_note || b.pickup_address)}
+              testID="return-directions-btn"
+            />
+          ) : null}
           {b.notes ? <Row label="Notes" value={b.notes} /> : null}
         </Card>
 
@@ -153,6 +191,13 @@ export default function BookingDetail() {
             <Row label="Address" value={b.pickup_address} />
             {b.pickup_instructions ? <Row label="Instructions" value={b.pickup_instructions} /> : null}
             {b.access_code ? <Row label="Access code" value={b.access_code} tone={colors.brand} /> : null}
+            <Btn
+              title="Get Directions"
+              icon="navigation"
+              variant="secondary"
+              onPress={() => openDirections(b.pickup_latitude, b.pickup_longitude, b.pickup_address)}
+              testID="pickup-directions-btn"
+            />
           </Card>
         ) : !isOwner && b.status === "pending" ? (
           <Card style={{ gap: 4 }}>
