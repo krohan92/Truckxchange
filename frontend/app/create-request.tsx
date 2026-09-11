@@ -3,6 +3,7 @@ import { View, StyleSheet, Pressable } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Location from "expo-location";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
@@ -19,16 +20,38 @@ export default function CreateRequest() {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("tow");
   const [location, setLocation] = useState("");
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locBusy, setLocBusy] = useState(false);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const useCurrentLocation = async () => {
+    setLocBusy(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      const places = await Location.reverseGeocodeAsync(pos.coords);
+      if (places?.[0]) {
+        const p = places[0];
+        const desc = [p.streetNumber, p.street].filter(Boolean).join(" ");
+        setLocation([desc, p.city, p.region].filter(Boolean).join(", ") || location);
+      }
+    } catch {}
+    finally { setLocBusy(false); }
+  };
 
   const submit = async () => {
     setError("");
     if (!title.trim() || !location.trim()) { setError("Title and location are required"); return; }
     setBusy(true);
     try {
-      await apiFetch("/requests", { method: "POST", body: { title, category, location, description } });
+      await apiFetch("/requests", {
+        method: "POST",
+        body: { title, category, location, description, latitude: coords?.latitude ?? null, longitude: coords?.longitude ?? null },
+      });
       router.back();
     } catch (e: any) { setError(e.message); }
     finally { setBusy(false); }
@@ -42,7 +65,7 @@ export default function CreateRequest() {
         <View style={{ width: 40 }} />
       </View>
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: insets.bottom + spacing.xxl }} showsVerticalScrollIndicator={false}>
-        <Txt color={colors.onSurfaceSecondary} style={{ lineHeight: 22 }}>Describe your breakdown or service need. Tow & repair companies will bid — the cheapest wins the job.</Txt>
+        <Txt color={colors.onSurfaceSecondary} style={{ lineHeight: 22 }}>Describe your breakdown or service need. Nearby tow & repair companies are notified automatically and bid — you pick the best offer.</Txt>
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           {CATS.map((c) => (
             <Pressable key={c.key} testID={`cat-${c.key}`} onPress={() => setCategory(c.key)} style={[styles.catBtn, category === c.key && styles.catActive]}>
@@ -52,7 +75,11 @@ export default function CreateRequest() {
           ))}
         </View>
         <Field label="Title" placeholder="e.g. Blown tire on I-95" value={title} onChangeText={setTitle} testID="input-title" />
-        <Field label="Location" placeholder="I-95 Mile 42, Richmond VA" value={location} onChangeText={setLocation} testID="input-location" />
+        <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-end" }}>
+          <View style={{ flex: 1 }}><Field label="Location" placeholder="I-95 Mile 42, Richmond VA" value={location} onChangeText={setLocation} testID="input-location" /></View>
+          <Btn title={locBusy ? "Locating…" : "Use My Location"} variant="secondary" icon="crosshairs-gps" onPress={useCurrentLocation} loading={locBusy} />
+        </View>
+        {coords ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>Pinned — nearby vendors within their service area will be notified automatically.</Txt> : null}
         <Field label="Description" placeholder="Details for the service company…" value={description} onChangeText={setDescription} multiline />
         {error ? <Txt color={colors.error} size={type.sm}>{error}</Txt> : null}
         <Btn title="Post Request" icon="bullhorn" onPress={submit} loading={busy} testID="post-request-btn" />
