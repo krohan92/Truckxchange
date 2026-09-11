@@ -1,0 +1,32 @@
+{
+  "auth": {
+    "welcomeBack": "ਵਾਪਸ ਆਉਣ ਤੇ ਸੁਆਗਤ ਹੈ",
+    "joinFleet": "ਫਲੀਟ ਵਿੱਚ ਸ਼ਾਮਲ ਹੋਵੋ",
+    "signInSubtitle": "ਬੁੱਕ ਕਰਨ ਜਾਂ ਆਪਣੇ ਟਰੱਕ ਸੰਭਾਲਣ ਲਈ ਸਾਈਨ ਇਨ ਕਰੋ",
+    "registerSubtitle": "ਭਾਰੀ ਮਸ਼ੀਨਰੀ ਕਿਰਾਏ ਤੇ ਲਓ, ਪੋਸਟ ਕਰੋ, ਜਾਂ ਸਰਵਿਸ ਕਰੋ",
+    "signIn": "ਸਾਈਨ ਇਨ",
+    "createAccount": "ਖਾਤਾ ਬਣਾਓ",
+    "iAmA": "ਮੈਂ ਹਾਂ",
+    "roleTrucker": "ਟਰੱਕਰ",
+    "roleTruckerDesc": "ਟਰੱਕ ਅਤੇ ਟ੍ਰੇਲਰ ਕਿਰਾਏ ਤੇ ਲਓ",
+    "roleOwner": "ਮਾਲਕ",
+    "roleOwnerDesc": "ਆਪਣੇ ਟਰੱਕ ਪੋਸਟ ਕਰੋ, ਕਮਾਓ",
+    "roleVendor": "ਸਰਵਿਸ ਕੰਪਨੀ",
+    "roleVendorDesc": "ਟੋਅ ਅਤੇ ਮੁਰੰਮਤ ਦੇ ਕੰਮਾਂ ਤੇ ਬੋਲੀ ਲਗਾਓ",
+    "roleAdmin": "ਐਡਮਿਨ",
+    "fullName": "ਪੂਰਾ ਨਾਮ",
+    "fullNamePlaceholder": "ਜੌਹਨ ਟਰੱਕਰ",
+    "email": "ਈਮੇਲ",
+    "emailPlaceholder": "you@example.com",
+    "password": "ਪਾਸਵਰਡ",
+    "quickTestAccess": "ਤੁਰੰਤ ਟੈਸਟ ਪਹੁੰਚ",
+    "errorEnterName": "ਕਿਰਪਾ ਕਰਕੇ ਆਪਣਾ ਨਾਮ ਦਰਜ ਕਰੋ",
+    "errorGeneric": "ਅਸਫਲ"
+  },
+  "language": {
+    "title": "ਭਾਸ਼ਾ",
+    "english": "English",
+    "spanish": "Español",
+    "punjabi": "ਪੰਜਾਬੀ"
+  }
+}
