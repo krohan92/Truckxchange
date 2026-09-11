@@ -167,7 +167,15 @@ class RequestIn(BaseModel):
     title: str
     category: Literal["tow", "repair", "maintenance"]
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     description: Optional[str] = ""
+
+
+class ServiceAreaIn(BaseModel):
+    latitude: float
+    longitude: float
+    radius_mi: float = Field(gt=0, le=500)
 
 
 class BidIn(BaseModel):
@@ -221,6 +229,20 @@ CANCELLATION_POLICIES = {
         "tiers": [(24 * 14, 1.0), (24 * 7, 0.5)],
     },
 }
+
+
+def haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance between two points, in miles. Used to match a
+    roadside request against each vendor's own declared service radius —
+    something a single Mongo $geoNear can't do since every vendor's radius
+    is different."""
+    import math
+    r = 3958.8  # earth radius in miles
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def estimated_trip_days(start_date: str, end_date: str) -> int:
@@ -1584,6 +1606,17 @@ async def list_threads(user: dict = Depends(get_current_user)):
 
 
 # ========================================================= ROADSIDE / BIDS ====
+@api.post("/vendor/service-area")
+async def set_service_area(data: ServiceAreaIn, user: dict = Depends(require("vendor", "admin"))):
+    """A vendor's base location + how far they're willing to travel — this
+    is what determines which roadside jobs they get notified about."""
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"service_latitude": data.latitude, "service_longitude": data.longitude, "service_radius_mi": data.radius_mi}},
+    )
+    return {"ok": True}
+
+
 @api.post("/requests")
 async def create_request(data: RequestIn, user: dict = Depends(get_current_user)):
     req = {
@@ -1597,14 +1630,46 @@ async def create_request(data: RequestIn, user: dict = Depends(get_current_user)
     }
     await db.requests.insert_one(dict(req))
     req.pop("_id", None)
+
+    # Auto-notify every vendor whose own declared service area actually
+    # covers this job — not a blast to every vendor nationwide.
+    if data.latitude is not None and data.longitude is not None:
+        vendors = await db.users.find(
+            {"role": "vendor", "service_latitude": {"$exists": True}, "service_longitude": {"$exists": True}, "service_radius_mi": {"$exists": True}},
+            {"_id": 0, "id": 1, "service_latitude": 1, "service_longitude": 1, "service_radius_mi": 1},
+        ).to_list(1000)
+        for v in vendors:
+            dist = haversine_miles(data.latitude, data.longitude, v["service_latitude"], v["service_longitude"])
+            if dist <= v["service_radius_mi"]:
+                await notify(
+                    v["id"],
+                    f"New {data.category} job {round(dist)} mi away",
+                    f"{req['title']} \u2014 {data.location}",
+                    "new_roadside_job",
+                    {"request_id": req["id"]},
+                )
     return req
 
 
 @api.get("/requests")
 async def list_requests(user: dict = Depends(get_current_user)):
-    # vendors see all open requests; others see their own posted requests
+    # vendors see open requests within their own service area (if they've set
+    # one), sorted nearest-first; others see their own posted requests.
     if user["role"] in ("vendor", "admin"):
-        items = await db.requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        items = await db.requests.find({"status": "open"}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "service_latitude": 1, "service_longitude": 1, "service_radius_mi": 1})
+        if fresh and fresh.get("service_latitude") is not None:
+            in_range = []
+            for r in items:
+                if r.get("latitude") is not None:
+                    dist = haversine_miles(fresh["service_latitude"], fresh["service_longitude"], r["latitude"], r["longitude"])
+                    if dist <= fresh["service_radius_mi"]:
+                        r["distance_mi"] = round(dist, 1)
+                        in_range.append(r)
+                else:
+                    in_range.append(r)  # no coordinates on this request — can't filter, show it anyway
+            in_range.sort(key=lambda r: r.get("distance_mi", 999999))
+            items = in_range
     else:
         items = await db.requests.find({"poster_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
     for it in items:
