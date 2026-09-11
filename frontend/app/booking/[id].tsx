@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, Linking, Alert, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
@@ -49,6 +49,8 @@ export default function BookingDetail() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState("");
+  const [renterReviewBusy, setRenterReviewBusy] = useState(false);
+  const [renterRating, setRenterRating] = useState<{ rating: number; rating_count: number } | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
   const [payError, setPayError] = useState("");
@@ -59,6 +61,12 @@ export default function BookingDetail() {
   }, [id]);
 
   useFocusEffect(useCallback(() => { setLoading(true); load().finally(() => setLoading(false)); }, [load]));
+
+  useEffect(() => {
+    if (b && user?.id === b.owner_id && b.status === "pending" && b.renter_id) {
+      apiFetch<any>(`/users/${b.renter_id}/rating`).then(setRenterRating).catch(() => {});
+    }
+  }, [b?.id, b?.status]);
 
   if (loading || !b) return <Loader />;
   const isOwner = user?.id === b.owner_id;
@@ -147,6 +155,15 @@ export default function BookingDetail() {
       await load();
     } catch {}
     finally { setReviewBusy(false); }
+  };
+
+  const submitRenterReview = async () => {
+    setRenterReviewBusy(true);
+    try {
+      await apiFetch(`/bookings/${id}/review-renter`, { method: "POST", body: { rating: stars, comment } });
+      await load();
+    } catch {}
+    finally { setRenterReviewBusy(false); }
   };
 
   const hasPhase = (p: string) => b.inspections?.some((i: any) => i.phase === p);
@@ -321,11 +338,50 @@ export default function BookingDetail() {
           </Card>
         )}
 
+        {isOwner && b.status === "completed" && (
+          <Card style={{ gap: spacing.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="star-outline" size={18} color={colors.brand} />
+              <Display size={type.lg}>RATE THIS RENTER</Display>
+            </View>
+            {b.renter_reviewed ? (
+              <Txt color={colors.success} weight="bold">Thanks — your review of {b.renter_name} has been submitted.</Txt>
+            ) : (
+              <>
+                <View style={{ flexDirection: "row", gap: spacing.sm, justifyContent: "center" }}>
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Pressable key={s} testID={`renter-star-${s}`} onPress={() => setStars(s)} hitSlop={6}>
+                      <Icon name={s <= stars ? "star" : "star-outline"} size={34} color={colors.warning} />
+                    </Pressable>
+                  ))}
+                </View>
+                <Field label="Comment (optional)" placeholder="How was the renter \u2014 on time, careful with the rig?" value={comment} onChangeText={setComment} multiline testID="renter-review-comment" />
+                <Btn title="Submit Review" icon="send" onPress={submitRenterReview} loading={renterReviewBusy} testID="submit-renter-review-btn" />
+              </>
+            )}
+          </Card>
+        )}
+
         {isOwner && b.status === "pending" && (
-          <View style={{ flexDirection: "row", gap: spacing.md }}>
-            <Btn title="Decline" variant="ghost" onPress={() => setStatus("declined")} style={{ flex: 1 }} testID="decline-btn" />
-            <Btn title="Approve" onPress={() => setStatus("approved")} style={{ flex: 1 }} testID="approve-btn" />
-          </View>
+          <>
+            {renterRating && renterRating.rating_count > 0 ? (
+              <Card style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Icon name="star" size={18} color={colors.warning} />
+                <Txt size={type.sm}>
+                  <Txt weight="bold">{b.renter_name}</Txt> has a {renterRating.rating.toFixed(1)}/5 rating from {renterRating.rating_count} past trip{renterRating.rating_count === 1 ? "" : "s"} as a renter.
+                </Txt>
+              </Card>
+            ) : (
+              <Card style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Icon name="account-question" size={18} color={colors.onSurfaceSecondary} />
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.renter_name} has no rental history yet on RigRent.</Txt>
+              </Card>
+            )}
+            <View style={{ flexDirection: "row", gap: spacing.md }}>
+              <Btn title="Decline" variant="ghost" onPress={() => setStatus("declined")} style={{ flex: 1 }} testID="decline-btn" />
+              <Btn title="Approve" onPress={() => setStatus("approved")} style={{ flex: 1 }} testID="approve-btn" />
+            </View>
+          </>
         )}
         {b.status === "active" && isOwner && (
           <View style={{ gap: spacing.sm }}>
