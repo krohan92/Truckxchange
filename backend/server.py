@@ -151,6 +151,11 @@ class BookingReviewIn(BaseModel):
     comment: Optional[str] = ""
 
 
+class RenterReviewIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: Optional[str] = ""
+
+
 class InspectionIn(BaseModel):
     phase: Literal["before", "after"]
     video_path: str
@@ -281,6 +286,8 @@ def public_user(u: dict) -> dict:
         "license_info": u.get("license_info"),
         "insurance_info": u.get("insurance_info"),
         "favorite_listing_ids": u.get("favorite_listing_ids", []),
+        "renter_rating": u.get("renter_rating", 0),
+        "renter_rating_count": u.get("renter_rating_count", 0),
     }
 
 
@@ -858,6 +865,7 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         "owner_earnings": owner_earnings,
         "status": "pending",
         "reviewed": False,
+        "renter_reviewed": False,
         "inspections": [],
         "extra_charges": [],
         # Snapshotted from the listing at booking time, so geofencing can prompt
@@ -1183,6 +1191,65 @@ async def review_booking(bid: str, data: BookingReviewIn, user: dict = Depends(g
 async def listing_reviews(lid: str):
     items = await db.reviews.find({"listing_id": lid}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return items
+
+
+@api.post("/bookings/{bid}/review-renter")
+async def review_renter(bid: str, data: RenterReviewIn, user: dict = Depends(get_current_user)):
+    """The owner rates the renter after a completed trip — the other half of
+    trust in the marketplace, so owners have a way to flag (or vouch for) who
+    they're handing a rig to."""
+    item = await db.bookings.find_one({"id": bid})
+    if not item or item["owner_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if item["status"] != "completed":
+        raise HTTPException(status_code=400, detail="You can rate the renter once the trip is completed")
+    if item.get("renter_reviewed"):
+        raise HTTPException(status_code=400, detail="You already reviewed this renter for this trip")
+
+    review = {
+        "id": str(uuid.uuid4()),
+        "renter_id": item["renter_id"],
+        "booking_id": bid,
+        "owner_id": user["id"],
+        "owner_name": user["name"],
+        "rating": data.rating,
+        "comment": data.comment,
+        "created_at": now_iso(),
+    }
+    await db.renter_reviews.insert_one(dict(review))
+    await db.bookings.update_one({"id": bid}, {"$set": {"renter_reviewed": True}})
+
+    renter = await db.users.find_one({"id": item["renter_id"]})
+    if renter:
+        old_count = renter.get("renter_rating_count", 0)
+        old_avg = renter.get("renter_rating", 0)
+        new_count = old_count + 1
+        new_avg = round((old_avg * old_count + data.rating) / new_count, 2)
+        await db.users.update_one({"id": item["renter_id"]}, {"$set": {"renter_rating": new_avg, "renter_rating_count": new_count}})
+        await notify(
+            item["renter_id"],
+            "You were rated",
+            f"{user['name']} rated you {data.rating}/5 for {item['listing_title']}.",
+            "renter_review_received",
+            {"booking_id": bid},
+        )
+    review.pop("_id", None)
+    return review
+
+
+@api.get("/users/{uid}/rating")
+async def get_renter_rating(uid: str):
+    """Public renter track record — lets an owner check a renter's history
+    before approving a booking request, and vice versa isn't needed here
+    since listing ratings already cover the owner's side."""
+    user = await db.users.find_one({"id": uid}, {"_id": 0, "renter_rating": 1, "renter_rating_count": 1, "name": 1})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "name": user.get("name"),
+        "rating": user.get("renter_rating", 0),
+        "rating_count": user.get("renter_rating_count", 0),
+    }
 
 
 # =============================================================== SETTINGS =====
