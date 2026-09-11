@@ -58,6 +58,12 @@ export default function Profile() {
         <Display size={type.huge}>{user.name}</Display>
         <Txt color={colors.onSurfaceSecondary}>{user.email}</Txt>
         <Badge label={ROLE_LABEL[user.role]} tone="brand" />
+        {isRenter && (user as any).renter_rating_count > 0 ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+            <Icon name="star" size={14} color={colors.warning} />
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>{(user as any).renter_rating.toFixed(1)} renter rating · {(user as any).renter_rating_count} trip{(user as any).renter_rating_count === 1 ? "" : "s"}</Txt>
+          </View>
+        ) : null}
       </View>
 
       <View style={{ padding: spacing.lg, gap: spacing.md }}>
