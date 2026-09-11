@@ -62,7 +62,7 @@ export default function ListingDetail() {
 
   useFocusEffect(
     useCallback(() => {
-      setIsFavorite(((user as any)?.favorite_listing_ids || []).includes(id));
+      setIsFavorite((user?.favorite_listing_ids || []).includes(id));
       setLoading(true);
       Promise.all([
         apiFetch(`/listings/${id}`, { auth: false }),
