@@ -156,6 +156,15 @@ class RenterReviewIn(BaseModel):
     comment: Optional[str] = ""
 
 
+class DisputeIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class DisputeResolveIn(BaseModel):
+    resolution: str = Field(min_length=1, max_length=1000)
+    charge_amount: float = Field(ge=0)  # admin's final decision on mileage/fuel extras — can be 0, the original estimate, or anything in between
+
+
 class InspectionIn(BaseModel):
     phase: Literal["before", "after"]
     video_path: str
@@ -890,6 +899,7 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
         "renter_reviewed": False,
         "inspections": [],
         "extra_charges": [],
+        "dispute_status": "none",
         # Snapshotted from the listing at booking time, so geofencing can prompt
         # the renter without needing a separate listing lookup later.
         "pickup_latitude": listing.get("latitude"),
@@ -1034,7 +1044,13 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
         await notify(item["renter_id"], "Trip completed", f"Your trip with {title} is complete. Safe travels!", "trip_completed", {"booking_id": bid})
         fresh_booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
         if fresh_booking:
-            await charge_trip_extras(fresh_booking)
+            if fresh_booking.get("dispute_status") == "open":
+                # Mileage/fuel numbers are disputed — hold automatic billing
+                # until an admin reviews and decides the real charge, rather
+                # than charging a number either side has flagged as wrong.
+                await notify(item["owner_id"], "Extras billing on hold", f"{title} has an open dispute \u2014 mileage/fuel charges are held until an admin resolves it.", "extra_charge_held", {"booking_id": bid})
+            else:
+                await charge_trip_extras(fresh_booking)
     elif target == "cancelled":
         other = item["renter_id"] if user["id"] == item["owner_id"] else item["owner_id"]
         msg = f"The booking for {title} was cancelled."
@@ -1046,37 +1062,22 @@ async def set_booking_status(bid: str, data: BookingStatusIn, user: dict = Depen
     return {"ok": True, "status": target, **({"refund": refund_info} if refund_info else {})}
 
 
-FUEL_ORDER = {"empty": 0, "1/4": 1, "1/2": 2, "3/4": 3, "full": 4}
-
-
-async def charge_trip_extras(booking: dict):
-    """Called when a trip is marked completed. Charges the renter's saved
-    card for any real mileage overage (beyond the listing's included
-    allowance) and a flat refuel fee if it came back with less fuel than it
-    left with. Best-effort — a failed charge never blocks completion."""
-    charges = []
-
-    miles_driven = booking.get("miles_driven")
-    included_miles = booking.get("included_miles")
-    ppm = booking.get("price_per_mile") or 0
-    if miles_driven is not None and included_miles is not None:
-        real_overage_miles = max(0, miles_driven - included_miles)
-        if real_overage_miles > 0 and ppm > 0:
-            charges.append({"label": f"{real_overage_miles} mi over the included allowance", "amount": round(real_overage_miles * ppm, 2)})
-
-    inspections = booking.get("inspections", [])
-    before = next((i for i in inspections if i["phase"] == "before" and i.get("fuel_level")), None)
-    after = next((i for i in inspections if i["phase"] == "after" and i.get("fuel_level")), None)
-    refuel_fee = booking.get("refuel_fee")
-    if before and after and refuel_fee:
-        if FUEL_ORDER.get(after["fuel_level"], 4) < FUEL_ORDER.get(before["fuel_level"], 4):
-            charges.append({"label": "Refueling fee (returned with less fuel)", "amount": refuel_fee})
-
+async def bill_extra_charges(booking: dict, charges: list, note: str = ""):
+    """Shared billing logic: takes a list of {label, amount} line items,
+    charges the renter's saved card off-session, records it, and notifies
+    both sides. Used both for the automatic post-trip charge and for a
+    dispute an admin has resolved."""
     if not charges:
         return None
-
     total = round(sum(c["amount"] for c in charges), 2)
     total_cents = int(round(total * 100))
+
+    if total_cents == 0:
+        await db.bookings.update_one(
+            {"id": booking["id"]},
+            {"$push": {"extra_charges": {"charges": charges, "total": 0, "billed": True, "note": note, "at": now_iso()}}},
+        )
+        return {"charges": charges, "total": 0, "billed": True}
 
     customer_id = booking.get("stripe_customer_id")
     payment_method_id = booking.get("stripe_payment_method_id")
@@ -1084,7 +1085,7 @@ async def charge_trip_extras(booking: dict):
         await notify(
             booking["owner_id"],
             "Extra charges couldn't be billed automatically",
-            f"{booking['listing_title']} has ${total} in mileage/fuel charges, but no saved payment method to charge. Contact the renter directly.",
+            f"{booking['listing_title']} has ${total} in charges, but no saved payment method to charge. Contact the renter directly.",
             "extra_charge_failed",
             {"booking_id": booking["id"]},
         )
@@ -1120,16 +1121,109 @@ async def charge_trip_extras(booking: dict):
 
     await db.bookings.update_one(
         {"id": booking["id"]},
-        {"$push": {"extra_charges": {"charges": charges, "total": total, "billed": billed, "at": now_iso()}}},
+        {"$push": {"extra_charges": {"charges": charges, "total": total, "billed": billed, "note": note, "at": now_iso()}}},
     )
 
     if billed:
-        await notify(booking["renter_id"], "Extra charges billed", f"${total} charged for {booking['listing_title']} (mileage/fuel).", "extra_charge_billed", {"booking_id": booking["id"]})
-        await notify(booking["owner_id"], "Extra charges billed", f"${total} in mileage/fuel charges billed for {booking['listing_title']}.", "extra_charge_billed", {"booking_id": booking["id"]})
+        await notify(booking["renter_id"], "Extra charges billed", f"${total} charged for {booking['listing_title']}.", "extra_charge_billed", {"booking_id": booking["id"]})
+        await notify(booking["owner_id"], "Extra charges billed", f"${total} in charges billed for {booking['listing_title']}.", "extra_charge_billed", {"booking_id": booking["id"]})
     else:
-        await notify(booking["owner_id"], "Extra charge failed", f"${total} in mileage/fuel charges for {booking['listing_title']} couldn't be billed \u2014 the card may have been declined. Contact the renter directly.", "extra_charge_failed", {"booking_id": booking["id"]})
+        await notify(booking["owner_id"], "Extra charge failed", f"${total} in charges for {booking['listing_title']} couldn't be billed \u2014 the card may have been declined. Contact the renter directly.", "extra_charge_failed", {"booking_id": booking["id"]})
 
     return {"charges": charges, "total": total, "billed": billed}
+
+
+FUEL_ORDER = {"empty": 0, "1/4": 1, "1/2": 2, "3/4": 3, "full": 4}
+
+
+async def charge_trip_extras(booking: dict):
+    """Called when a trip is marked completed (and not disputed). Charges the
+    renter's saved card for any real mileage overage (beyond the listing's
+    included allowance) and a flat refuel fee if it came back with less fuel
+    than it left with. Best-effort — a failed charge never blocks completion."""
+    charges = []
+
+    miles_driven = booking.get("miles_driven")
+    included_miles = booking.get("included_miles")
+    ppm = booking.get("price_per_mile") or 0
+    if miles_driven is not None and included_miles is not None:
+        real_overage_miles = max(0, miles_driven - included_miles)
+        if real_overage_miles > 0 and ppm > 0:
+            charges.append({"label": f"{real_overage_miles} mi over the included allowance", "amount": round(real_overage_miles * ppm, 2)})
+
+    inspections = booking.get("inspections", [])
+    before = next((i for i in inspections if i["phase"] == "before" and i.get("fuel_level")), None)
+    after = next((i for i in inspections if i["phase"] == "after" and i.get("fuel_level")), None)
+    refuel_fee = booking.get("refuel_fee")
+    if before and after and refuel_fee:
+        if FUEL_ORDER.get(after["fuel_level"], 4) < FUEL_ORDER.get(before["fuel_level"], 4):
+            charges.append({"label": "Refueling fee (returned with less fuel)", "amount": refuel_fee})
+
+    return await bill_extra_charges(booking, charges)
+
+
+@api.post("/bookings/{bid}/dispute")
+async def file_dispute(bid: str, data: DisputeIn, user: dict = Depends(get_current_user)):
+    """Either the owner or renter can flag that the mileage/fuel numbers (or
+    anything else about the trip's billing) look wrong. This holds automatic
+    extras billing until an admin reviews it, instead of charging a number
+    either side has already flagged as disputed."""
+    item = await db.bookings.find_one({"id": bid})
+    if not item or user["id"] not in (item["owner_id"], item["renter_id"]):
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if item["status"] not in ("active", "completed"):
+        raise HTTPException(status_code=400, detail="Disputes can only be filed on an active or completed trip")
+    if item.get("dispute_status") == "open":
+        raise HTTPException(status_code=400, detail="This trip already has an open dispute")
+
+    await db.bookings.update_one(
+        {"id": bid},
+        {"$set": {
+            "dispute_status": "open",
+            "dispute_reason": data.reason,
+            "dispute_opened_by": user["id"],
+            "dispute_opened_at": now_iso(),
+        }},
+    )
+    other = item["renter_id"] if user["id"] == item["owner_id"] else item["owner_id"]
+    await notify(other, "Dispute filed", f"{user['name']} flagged an issue with {item['listing_title']}: {data.reason[:100]}", "dispute_filed", {"booking_id": bid})
+    async for admin in db.users.find({"role": "admin"}, {"_id": 0, "id": 1}):
+        await notify(admin["id"], "New dispute to review", f"{item['listing_title']}: {data.reason[:100]}", "dispute_filed", {"booking_id": bid})
+    return {"ok": True}
+
+
+@api.get("/admin/disputes")
+async def list_disputes(user: dict = Depends(require("admin"))):
+    items = await db.bookings.find({"dispute_status": "open"}, {"_id": 0}).sort("dispute_opened_at", -1).to_list(200)
+    return items
+
+
+@api.post("/admin/disputes/{bid}/resolve")
+async def resolve_dispute(bid: str, data: DisputeResolveIn, user: dict = Depends(require("admin"))):
+    booking = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.get("dispute_status") != "open":
+        raise HTTPException(status_code=400, detail="No open dispute on this booking")
+
+    result = None
+    if data.charge_amount > 0:
+        result = await bill_extra_charges(booking, [{"label": "Dispute resolution", "amount": data.charge_amount}], note=data.resolution)
+
+    await db.bookings.update_one(
+        {"id": bid},
+        {"$set": {
+            "dispute_status": "resolved",
+            "dispute_resolution": data.resolution,
+            "dispute_resolved_amount": data.charge_amount,
+            "dispute_resolved_by": user["id"],
+            "dispute_resolved_at": now_iso(),
+        }},
+    )
+    msg = f"Resolution: {data.resolution}" + (f" \u2014 ${data.charge_amount} charged." if data.charge_amount > 0 else " \u2014 no charge.")
+    await notify(booking["renter_id"], "Dispute resolved", msg, "dispute_resolved", {"booking_id": bid})
+    await notify(booking["owner_id"], "Dispute resolved", msg, "dispute_resolved", {"booking_id": bid})
+    return {"ok": True, "billed": result}
 
 
 @api.post("/bookings/{bid}/inspection")
@@ -1156,8 +1250,28 @@ async def add_inspection(bid: str, data: InspectionIn, user: dict = Depends(get_
     if before and after:
         miles_driven = after["odometer"] - before["odometer"]
         overage = max(0, miles_driven - fresh.get("estimated_miles", 0))
-        await db.bookings.update_one({"id": bid}, {"$set": {"miles_driven": miles_driven, "mileage_overage": overage}})
-        if overage > 0:
+        update = {"miles_driven": miles_driven, "mileage_overage": overage}
+
+        # Sanity-check against elapsed time: one driver is legally capped at
+        # ~11 hours of driving per day (FMCSA hours-of-service), so a claim
+        # far beyond that is either a typo or worth a second look — flag it
+        # rather than silently trust the number.
+        try:
+            elapsed_days = max((dateparser.parse(after["at"]) - dateparser.parse(before["at"])).total_seconds() / 86400, 0.1)
+            implied_miles_per_day = miles_driven / elapsed_days
+        except Exception:
+            implied_miles_per_day = None
+
+        mileage_flagged = implied_miles_per_day is not None and implied_miles_per_day > 800
+        update["mileage_flagged"] = mileage_flagged
+        if mileage_flagged:
+            update["mileage_flag_reason"] = f"Claimed {miles_driven} mi over ~{elapsed_days:.1f} days ({implied_miles_per_day:.0f} mi/day) \u2014 beyond what one driver can legally drive under FMCSA hours-of-service rules. Worth double-checking before completing."
+
+        await db.bookings.update_one({"id": bid}, {"$set": update})
+
+        if mileage_flagged:
+            await notify(fresh["owner_id"], "Mileage looks unusual", update["mileage_flag_reason"], "mileage_flagged", {"booking_id": bid})
+        elif overage > 0:
             await notify(
                 fresh["owner_id"],
                 "Mileage overage",
