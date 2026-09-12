@@ -110,6 +110,7 @@ export default function Profile() {
               <Pressable testID="rate-plus" onPress={() => updateRate(0.01)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
             </View>
             <Btn title="Review Verifications" icon="clipboard-check" variant="secondary" onPress={() => router.push("/admin")} testID="admin-review-btn" />
+            <Btn title="Review Disputes" icon="scale-balance" variant="secondary" onPress={() => router.push("/admin-disputes")} testID="admin-disputes-btn" />
             <Btn
               title={reseedBusy ? "Reseeding…" : "Reseed Demo Listings"}
               icon="refresh"
