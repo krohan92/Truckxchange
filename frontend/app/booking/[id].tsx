@@ -102,6 +102,18 @@ export default function BookingDetail() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelResult, setCancelResult] = useState<{ refund_pct: number; refund_amount: number } | null>(null);
   const [cancelError, setCancelError] = useState("");
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeBusy, setDisputeBusy] = useState(false);
+
+  const fileDispute = async () => {
+    setDisputeBusy(true);
+    try {
+      await apiFetch(`/bookings/${id}/dispute`, { method: "POST", body: { reason: disputeReason } });
+      setDisputeReason("");
+      await load();
+    } catch {}
+    finally { setDisputeBusy(false); }
+  };
 
   const cancelBooking = () => {
     Alert.alert(
@@ -268,6 +280,28 @@ export default function BookingDetail() {
           </Card>
         ) : null}
 
+        {b.dispute_status === "open" ? (
+          <Card style={{ gap: spacing.sm, borderColor: colors.error }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="flag" size={18} color={colors.error} />
+              <Display size={type.lg}>DISPUTE OPEN</Display>
+            </View>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.dispute_reason}</Txt>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Extras billing is on hold until an admin reviews this.</Txt>
+          </Card>
+        ) : b.dispute_status === "resolved" ? (
+          <Card style={{ gap: 4 }}>
+            <Display size={type.lg}>DISPUTE RESOLVED</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.dispute_resolution}</Txt>
+          </Card>
+        ) : ["active", "completed"].includes(b.status) ? (
+          <Card style={{ gap: spacing.sm }}>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Something look wrong with the mileage, fuel, or a charge?</Txt>
+            <Field placeholder="Describe the issue…" value={disputeReason} onChangeText={setDisputeReason} multiline testID="dispute-reason" />
+            <Btn title="File a Dispute" variant="ghost" icon="flag-outline" onPress={fileDispute} loading={disputeBusy} disabled={!disputeReason.trim()} testID="file-dispute-btn" />
+          </Card>
+        ) : null}
+
         <Card style={{ gap: spacing.md }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Icon name="video-outline" size={18} color={colors.brand} />
@@ -383,6 +417,16 @@ export default function BookingDetail() {
             </View>
           </>
         )}
+        {b.mileage_flagged ? (
+          <Card style={{ gap: spacing.sm, borderColor: colors.warning }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Icon name="alert" size={18} color={colors.warning} />
+              <Display size={type.lg}>MILEAGE LOOKS UNUSUAL</Display>
+            </View>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>{b.mileage_flag_reason}</Txt>
+          </Card>
+        ) : null}
+
         {b.status === "active" && isOwner && (
           <View style={{ gap: spacing.sm }}>
             <Btn title="Mark Completed" onPress={() => setStatus("completed")} disabled={!hasPhase("after")} testID="progress-btn" />
