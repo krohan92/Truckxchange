@@ -53,6 +53,9 @@ export default function BrowseDrivers() {
                     {p.availability ? <Badge label={p.availability} tone="muted" /> : null}
                   </View>
                   {p.years_experience != null ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>{p.years_experience} yrs experience{p.home_state ? ` · ${p.home_state}` : ""}</Txt> : null}
+                  {(p.equipment_experience || []).length > 0 ? (
+                    <Txt size={type.sm} color={colors.onSurfaceSecondary} numberOfLines={1}>{p.equipment_experience.slice(0, 3).join(", ")}</Txt>
+                  ) : null}
                 </View>
                 <Icon name="chevron-right" size={22} color={colors.onSurfaceSecondary} />
               </Pressable>
