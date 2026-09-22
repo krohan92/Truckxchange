@@ -1,9 +1,9 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
-import { Txt, Display, Icon, Loader, Badge, Card } from "@/src/ui";
+import { Txt, Display, Icon, Loader, Badge, Card, Btn } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 export default function DriverProfileView() {
@@ -53,11 +53,21 @@ export default function DriverProfileView() {
             {(p.endorsements || []).map((e: string) => <Badge key={e} label={e} tone="muted" />)}
           </View>
           {p.years_experience != null ? <Txt><Txt weight="bold">{p.years_experience}</Txt> years of experience</Txt> : null}
-          {p.home_location ? <Txt color={colors.onSurfaceSecondary}>Based in {p.home_location}</Txt> : null}
+          {p.home_state ? <Txt color={colors.onSurfaceSecondary}>Based in {p.home_state}</Txt> : null}
           {p.bio ? <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22, marginTop: spacing.sm }}>{p.bio}</Txt> : null}
         </Card>
 
-        <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ textAlign: "center" }}>To message this driver, reach out through a job they've applied to — open that job's Applicants list and tap Message there.</Txt>
+        {p.phone_number ? (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>REACH OUT DIRECTLY</Display>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Btn title="Call" icon="phone" onPress={() => Linking.openURL(`tel:${p.phone_number}`)} style={{ flex: 1 }} testID="call-driver-btn" />
+              <Btn title="Text" icon="message-text-outline" variant="secondary" onPress={() => Linking.openURL(`sms:${p.phone_number}`)} style={{ flex: 1 }} testID="text-driver-btn" />
+            </View>
+          </Card>
+        ) : (
+          <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ textAlign: "center" }}>This driver hasn't added a phone number yet. To message them, reach out through a job they've applied to — open that job's Applicants list and tap Message there.</Txt>
+        )}
       </ScrollView>
     </View>
   );
