@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, Pressable } from "react-native";
+import { View, StyleSheet, Pressable, Linking, Alert } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -50,10 +50,19 @@ export default function RequestDetail() {
     finally { setBusy(false); }
   };
 
+  const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
+
   const accept = async (bidId: string) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    await apiFetch(`/requests/${id}/accept`, { method: "POST", body: { bid_id: bidId } });
-    await load();
+    setAcceptBusy(bidId);
+    try {
+      const res = await apiFetch<{ checkout_url: string }>(`/requests/${id}/accept`, { method: "POST", body: { bid_id: bidId } });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      await Linking.openURL(res.checkout_url);
+    } catch (e: any) {
+      Alert.alert("Couldn't start payment", e.message || "Try again in a moment.");
+    } finally {
+      setAcceptBusy(null);
+    }
   };
 
   return (
@@ -112,7 +121,7 @@ export default function RequestDetail() {
                 </View>
                 {bid.note ? <Txt size={type.sm} color={colors.onSurfaceTertiary}>{bid.note}</Txt> : null}
                 {isPoster && open && (
-                  <Btn title="Accept Bid" icon="check" onPress={() => accept(bid.id)} style={{ height: 44 }} testID={`accept-bid-${bid.id}`} />
+                  <Btn title="Accept & Pay" icon="credit-card" onPress={() => accept(bid.id)} loading={acceptBusy === bid.id} style={{ height: 44 }} testID={`accept-bid-${bid.id}`} />
                 )}
               </Card>
             );
