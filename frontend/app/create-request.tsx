@@ -65,7 +65,7 @@ export default function CreateRequest() {
         <View style={{ width: 40 }} />
       </View>
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: insets.bottom + spacing.xxl }} showsVerticalScrollIndicator={false}>
-        <Txt color={colors.onSurfaceSecondary} style={{ lineHeight: 22 }}>Describe your breakdown or service need. Nearby tow & repair companies are notified automatically and bid — you pick the best offer.</Txt>
+        <Txt color={colors.onSurfaceSecondary} style={{ lineHeight: 22 }}>Describe your breakdown or service need. Nearby tow & repair companies are notified automatically and bid — pick the best offer and pay securely through the app.</Txt>
         <View style={{ flexDirection: "row", gap: spacing.md }}>
           {CATS.map((c) => (
             <Pressable key={c.key} testID={`cat-${c.key}`} onPress={() => setCategory(c.key)} style={[styles.catBtn, category === c.key && styles.catActive]}>
