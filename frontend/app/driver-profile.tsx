@@ -12,6 +12,7 @@ import { colors, spacing, radius, type } from "@/src/theme";
 const CDL_CLASSES = ["A", "B", "C", "None"];
 const AVAILABILITIES = ["Full-time", "Part-time", "Local", "Regional", "OTR"];
 const ENDORSEMENTS = ["Hazmat", "Tanker", "Doubles/Triples", "Passenger"];
+const EQUIPMENT_TYPES = ["Sleeper", "Day Cab", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Tow Truck", "Flatbed Trailer", "Reefer", "Dry Van", "Lowboy"];
 
 export default function DriverProfileEdit() {
   const router = useRouter();
@@ -23,6 +24,7 @@ export default function DriverProfileEdit() {
   const [cdlClass, setCdlClass] = useState<string | null>(null);
   const [availability, setAvailability] = useState<string | null>(null);
   const [endorsements, setEndorsements] = useState<string[]>([]);
+  const [equipmentExperience, setEquipmentExperience] = useState<string[]>([]);
   const [bio, setBio] = useState("");
   const [homeState, setHomeState] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -37,6 +39,7 @@ export default function DriverProfileEdit() {
       setCdlClass(p.cdl_class || null);
       setAvailability(p.availability || null);
       setEndorsements(p.endorsements || []);
+      setEquipmentExperience((p as any).equipment_experience || []);
       setBio(p.bio || "");
       setHomeState((p as any).home_state || "");
       setPhoneNumber((p as any).phone_number || "");
@@ -46,6 +49,10 @@ export default function DriverProfileEdit() {
 
   const toggleEndorsement = (e: string) => {
     setEndorsements((list) => (list.includes(e) ? list.filter((x) => x !== e) : [...list, e]));
+  };
+
+  const toggleEquipment = (e: string) => {
+    setEquipmentExperience((list) => (list.includes(e) ? list.filter((x) => x !== e) : [...list, e]));
   };
 
   const save = async () => {
@@ -60,6 +67,7 @@ export default function DriverProfileEdit() {
           cdl_class: cdlClass,
           availability,
           endorsements,
+          equipment_experience: equipmentExperience,
           bio,
           home_state: homeState,
           phone_number: phoneNumber,
@@ -108,6 +116,16 @@ export default function DriverProfileEdit() {
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
             {ENDORSEMENTS.map((e) => (
               <Chip key={e} label={e} active={endorsements.includes(e)} onPress={() => toggleEndorsement(e)} />
+            ))}
+          </View>
+        </View>
+
+        <View>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium" style={{ marginBottom: spacing.sm }}>Equipment experience</Txt>
+          <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ marginBottom: spacing.sm }}>What have you driven? Select all that apply.</Txt>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {EQUIPMENT_TYPES.map((e) => (
+              <Chip key={e} label={e} active={equipmentExperience.includes(e)} onPress={() => toggleEquipment(e)} />
             ))}
           </View>
         </View>
