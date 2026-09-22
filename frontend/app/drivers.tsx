@@ -52,7 +52,7 @@ export default function BrowseDrivers() {
                     {p.cdl_class && p.cdl_class !== "None" ? <Badge label={`CDL ${p.cdl_class}`} tone="brand" /> : null}
                     {p.availability ? <Badge label={p.availability} tone="muted" /> : null}
                   </View>
-                  {p.years_experience != null ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>{p.years_experience} yrs experience{p.home_location ? ` · ${p.home_location}` : ""}</Txt> : null}
+                  {p.years_experience != null ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>{p.years_experience} yrs experience{p.home_state ? ` · ${p.home_state}` : ""}</Txt> : null}
                 </View>
                 <Icon name="chevron-right" size={22} color={colors.onSurfaceSecondary} />
               </Pressable>
