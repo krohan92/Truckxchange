@@ -13,6 +13,16 @@ export type User = {
   favorite_listing_ids?: string[];
   renter_rating?: number;
   renter_rating_count?: number;
+  driver_profile?: {
+    open_to_work?: boolean;
+    years_experience?: number;
+    cdl_class?: string;
+    endorsements?: string[];
+    availability?: string;
+    bio?: string;
+    home_location?: string;
+    resume_path?: string;
+  };
 };
 
 type AuthCtx = {
