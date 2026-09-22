@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Field, Btn, Icon, Chip, Loader } from "@/src/ui";
+import StatePickerField from "@/src/components/StatePickerField";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 const CDL_CLASSES = ["A", "B", "C", "None"];
@@ -23,7 +24,8 @@ export default function DriverProfileEdit() {
   const [availability, setAvailability] = useState<string | null>(null);
   const [endorsements, setEndorsements] = useState<string[]>([]);
   const [bio, setBio] = useState("");
-  const [homeLocation, setHomeLocation] = useState("");
+  const [homeState, setHomeState] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -36,7 +38,8 @@ export default function DriverProfileEdit() {
       setAvailability(p.availability || null);
       setEndorsements(p.endorsements || []);
       setBio(p.bio || "");
-      setHomeLocation(p.home_location || "");
+      setHomeState((p as any).home_state || "");
+      setPhoneNumber((p as any).phone_number || "");
     }
     setLoading(false);
   }, [user]));
@@ -58,7 +61,8 @@ export default function DriverProfileEdit() {
           availability,
           endorsements,
           bio,
-          home_location: homeLocation,
+          home_state: homeState,
+          phone_number: phoneNumber,
         },
       });
       await refresh();
@@ -86,7 +90,9 @@ export default function DriverProfileEdit() {
         </Pressable>
 
         <Field label="Years of experience" placeholder="5" keyboardType="decimal-pad" value={yearsExperience} onChangeText={setYearsExperience} testID="input-years" />
-        <Field label="Home base" placeholder="City, State" value={homeLocation} onChangeText={setHomeLocation} testID="input-home-location" />
+        <Field label="Phone number" placeholder="(555) 123-4567" keyboardType="phone-pad" value={phoneNumber} onChangeText={setPhoneNumber} testID="input-phone" />
+        <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ marginTop: -spacing.sm }}>Only shown to owners viewing your profile directly — not on the browse list.</Txt>
+        <StatePickerField label="Home base state" value={homeState} onChange={setHomeState} testID="input-home-state" />
 
         <View>
           <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium" style={{ marginBottom: spacing.sm }}>CDL class</Txt>
