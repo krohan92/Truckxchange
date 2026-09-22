@@ -9,7 +9,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Field, Btn, Icon, Loader, Badge, Card, Chip } from "@/src/ui";
+import DatePickerField from "@/src/components/DatePickerField";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function formatDateForApi(d: Date): string {
+  return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
 
 const { width } = Dimensions.get("window");
 
@@ -50,8 +56,8 @@ export default function ListingDetail() {
   const [reviews, setReviews] = useState<any[]>([]);
 
   const [miles, setMiles] = useState("250");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [startDateObj, setStartDateObj] = useState<Date | null>(null);
+  const [endDateObj, setEndDateObj] = useState<Date | null>(null);
   const [loadType, setLoadType] = useState("");
   const [loadWeight, setLoadWeight] = useState("");
   const [pickup, setPickup] = useState("");
@@ -107,8 +113,8 @@ export default function ListingDetail() {
         body: {
           listing_id: listing.id,
           estimated_miles: nMiles,
-          start_date: startDate || "TBD",
-          end_date: endDate || "TBD",
+          start_date: startDateObj ? formatDateForApi(startDateObj) : "TBD",
+          end_date: endDateObj ? formatDateForApi(endDateObj) : "TBD",
           load_type: loadType,
           load_weight: loadWeight,
           pickup,
@@ -239,8 +245,24 @@ export default function ListingDetail() {
               <View style={{ gap: spacing.md }}>
                 <Field label="Estimated miles" placeholder="e.g. 850" keyboardType="number-pad" value={miles} onChangeText={setMiles} testID="input-miles" />
                 <View style={{ flexDirection: "row", gap: spacing.md }}>
-                  <View style={{ flex: 1 }}><Field label="Start (optional)" placeholder="Jun 12" value={startDate} onChangeText={setStartDate} /></View>
-                  <View style={{ flex: 1 }}><Field label="End (optional)" placeholder="Jun 15" value={endDate} onChangeText={setEndDate} /></View>
+                  <View style={{ flex: 1 }}>
+                    <DatePickerField
+                      label="Start (optional)"
+                      value={startDateObj}
+                      onChange={(d) => { setStartDateObj(d); if (endDateObj && endDateObj < d) setEndDateObj(null); }}
+                      minDate={new Date()}
+                      testID="input-start-date"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <DatePickerField
+                      label="End (optional)"
+                      value={endDateObj}
+                      onChange={setEndDateObj}
+                      minDate={startDateObj || new Date()}
+                      testID="input-end-date"
+                    />
+                  </View>
                 </View>
                 <Field label="Load type" placeholder="e.g. Steel coils, produce" value={loadType} onChangeText={setLoadType} testID="input-loadtype" />
                 <Field label="Load weight (optional)" placeholder="e.g. 38,000 lb" value={loadWeight} onChangeText={setLoadWeight} />
