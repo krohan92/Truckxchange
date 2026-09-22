@@ -191,7 +191,8 @@ class DriverProfileIn(BaseModel):
     open_to_work: bool = True
     years_experience: Optional[float] = None
     cdl_class: Optional[Literal["A", "B", "C", "None"]] = None
-    endorsements: List[str] = []  # e.g. ["Hazmat", "Tanker", "Doubles/Triples"]
+    endorsements: List[str] = []  # official CDL endorsements, e.g. ["Hazmat", "Tanker", "Doubles/Triples"]
+    equipment_experience: List[str] = []  # truck/trailer types they've driven, e.g. ["Semi", "Flatbed", "Reefer"]
     availability: Optional[Literal["Full-time", "Part-time", "Local", "Regional", "OTR"]] = None
     bio: Optional[str] = ""
     home_state: Optional[str] = ""
