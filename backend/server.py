@@ -194,7 +194,8 @@ class DriverProfileIn(BaseModel):
     endorsements: List[str] = []  # e.g. ["Hazmat", "Tanker", "Doubles/Triples"]
     availability: Optional[Literal["Full-time", "Part-time", "Local", "Regional", "OTR"]] = None
     bio: Optional[str] = ""
-    home_location: Optional[str] = ""
+    home_state: Optional[str] = ""
+    phone_number: Optional[str] = ""
     resume_path: Optional[str] = ""
 
 
@@ -1996,14 +1997,20 @@ async def update_driver_profile(data: DriverProfileIn, user: dict = Depends(requ
 
 
 @api.get("/drivers")
-async def list_drivers(cdl_class: Optional[str] = None):
-    """Owners browse truckers who've opted in to being found for hire."""
+async def list_drivers(cdl_class: Optional[str] = None, user: dict = Depends(require("owner", "admin"))):
+    """Owners browse truckers who've opted in to being found for hire.
+    Phone numbers are intentionally left out of the list view — shown only
+    on an individual driver's profile page, where there's clear intent to
+    actually reach out, not on a casual scroll."""
     query = {"role": "renter", "driver_profile.open_to_work": True}
     if cdl_class:
         query["driver_profile.cdl_class"] = cdl_class
     items = await db.users.find(
         query, {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1}
     ).to_list(200)
+    for item in items:
+        if item.get("driver_profile"):
+            item["driver_profile"].pop("phone_number", None)
     return items
 
 
@@ -2014,6 +2021,9 @@ async def get_driver_profile(uid: str, user: dict = Depends(get_current_user)):
     )
     if not target:
         raise HTTPException(status_code=404, detail="Driver not found")
+    # Contact info only visible to owners/admins with a real reason to reach out.
+    if user["role"] not in ("owner", "admin") and target.get("driver_profile"):
+        target["driver_profile"].pop("phone_number", None)
     return target
 
 
