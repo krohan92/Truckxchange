@@ -18,6 +18,7 @@ export type User = {
     years_experience?: number;
     cdl_class?: string;
     endorsements?: string[];
+    equipment_experience?: string[];
     availability?: string;
     bio?: string;
     home_state?: string;
