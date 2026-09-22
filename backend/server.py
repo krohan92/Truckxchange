@@ -187,6 +187,33 @@ class ServiceAreaIn(BaseModel):
     radius_mi: float = Field(gt=0, le=500)
 
 
+class DriverProfileIn(BaseModel):
+    open_to_work: bool = True
+    years_experience: Optional[float] = None
+    cdl_class: Optional[Literal["A", "B", "C", "None"]] = None
+    endorsements: List[str] = []  # e.g. ["Hazmat", "Tanker", "Doubles/Triples"]
+    availability: Optional[Literal["Full-time", "Part-time", "Local", "Regional", "OTR"]] = None
+    bio: Optional[str] = ""
+    home_location: Optional[str] = ""
+    resume_path: Optional[str] = ""
+
+
+class DriverJobIn(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    job_type: Literal["Full-time", "Part-time", "Local", "Regional", "OTR"]
+    pay: Optional[str] = ""  # free text — "$0.60/mi", "$22/hr", "$70k/yr", etc.
+    cdl_class_required: Optional[Literal["A", "B", "C", "None"]] = None
+    min_years_experience: Optional[float] = None
+
+
+class DriverApplicationIn(BaseModel):
+    note: Optional[str] = ""
+
+
 class BidIn(BaseModel):
     price: float
     eta: str
@@ -198,7 +225,9 @@ class AcceptBidIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    commission_rate: float = Field(ge=0, le=0.5)
+    commission_rate: Optional[float] = Field(None, ge=0, le=0.5)
+    roadside_commission_rate: Optional[float] = Field(None, ge=0, le=0.5)
+    driver_placement_fee: Optional[float] = Field(None, ge=0, le=1000)
 
 
 class ReviewIn(BaseModel):
@@ -207,7 +236,7 @@ class ReviewIn(BaseModel):
 
 
 class MessageIn(BaseModel):
-    context_type: Literal["booking", "request"]
+    context_type: Literal["booking", "request", "job"]
     context_id: str
     body: str = Field(min_length=1, max_length=2000)
 
@@ -319,6 +348,7 @@ def public_user(u: dict) -> dict:
         "favorite_listing_ids": u.get("favorite_listing_ids", []),
         "renter_rating": u.get("renter_rating", 0),
         "renter_rating_count": u.get("renter_rating_count", 0),
+        "driver_profile": u.get("driver_profile"),
     }
 
 
@@ -347,8 +377,17 @@ def require(*roles: str):
 async def get_settings() -> dict:
     s = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not s:
-        s = {"id": "global", "commission_rate": 0.05}
+        s = {"id": "global", "commission_rate": 0.05, "roadside_commission_rate": 0.08, "driver_placement_fee": 49.0}
         await db.settings.insert_one(dict(s))
+    # Backfill new fields for settings docs created before these existed.
+    updates = {}
+    if "roadside_commission_rate" not in s:
+        updates["roadside_commission_rate"] = 0.08
+    if "driver_placement_fee" not in s:
+        updates["driver_placement_fee"] = 49.0
+    if updates:
+        await db.settings.update_one({"id": "global"}, {"$set": updates})
+        s.update(updates)
     return s
 
 
@@ -1539,6 +1578,35 @@ async def stripe_webhook(request: Request):
                     "payment_received",
                     {"booking_id": bid},
                 )
+
+        request_id = (session.get("metadata") or {}).get("request_id")
+        bid_id = (session.get("metadata") or {}).get("bid_id")
+        if request_id and bid_id:
+            await db.requests.update_one({"id": request_id}, {"$set": {"status": "awarded", "accepted_bid_id": bid_id}})
+            await db.bids.update_one({"id": bid_id}, {"$set": {"status": "accepted", "paid": True}})
+            await db.bids.update_many({"request_id": request_id, "id": {"$ne": bid_id}}, {"$set": {"status": "rejected"}})
+            won_bid = await db.bids.find_one({"id": bid_id}, {"_id": 0})
+            req = await db.requests.find_one({"id": request_id}, {"_id": 0})
+            if won_bid and req:
+                await notify(
+                    won_bid["vendor_id"],
+                    "Job paid and accepted",
+                    f"You won and were paid for: {req['title']}. Head to the job.",
+                    "bid_accepted",
+                    {"request_id": request_id},
+                )
+
+        job_id = (session.get("metadata") or {}).get("job_id")
+        application_id = (session.get("metadata") or {}).get("application_id")
+        if job_id and application_id:
+            await db.driver_jobs.update_one({"id": job_id}, {"$set": {"status": "filled", "hired_application_id": application_id}})
+            await db.driver_applications.update_one({"id": application_id}, {"$set": {"status": "hired"}})
+            await db.driver_applications.update_many({"job_id": job_id, "id": {"$ne": application_id}}, {"$set": {"status": "not_selected"}})
+            application = await db.driver_applications.find_one({"id": application_id}, {"_id": 0})
+            job = await db.driver_jobs.find_one({"id": job_id}, {"_id": 0})
+            if application and job:
+                await notify(application["driver_id"], "You were hired!", f"{job['poster_name']} hired you for {job['title']}. Reach out to coordinate next steps.", "driver_hired", {"job_id": job_id})
+
     return {"received": True}
 
 
@@ -1550,13 +1618,19 @@ async def cancellation_policies():
 @api.get("/settings")
 async def settings_get(user: dict = Depends(require("admin"))):
     s = await get_settings()
-    return {"commission_rate": s["commission_rate"]}
+    return {
+        "commission_rate": s["commission_rate"],
+        "roadside_commission_rate": s.get("roadside_commission_rate", 0.08),
+        "driver_placement_fee": s.get("driver_placement_fee", 49.0),
+    }
 
 
 @api.post("/settings")
 async def settings_set(data: SettingsIn, user: dict = Depends(require("admin"))):
-    await db.settings.update_one({"id": "global"}, {"$set": {"commission_rate": data.commission_rate}}, upsert=True)
-    return {"commission_rate": data.commission_rate}
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    if updates:
+        await db.settings.update_one({"id": "global"}, {"$set": updates}, upsert=True)
+    return await settings_get(user)
 
 
 # ========================================================= NOTIFICATIONS ======
@@ -1613,6 +1687,14 @@ async def _thread_participants(context_type: str, context_id: str) -> Optional[s
         parts = {r["poster_id"]}
         async for bid in db.bids.find({"request_id": context_id}, {"_id": 0, "vendor_id": 1}):
             parts.add(bid["vendor_id"])
+        return parts
+    if context_type == "job":
+        j = await db.driver_jobs.find_one({"id": context_id}, {"_id": 0, "poster_id": 1})
+        if not j:
+            return None
+        parts = {j["poster_id"]}
+        async for app in db.driver_applications.find({"job_id": context_id}, {"_id": 0, "driver_id": 1}):
+            parts.add(app["driver_id"])
         return parts
     return None
 
@@ -1712,6 +1794,27 @@ async def list_threads(user: dict = Depends(get_current_user)):
         with_name = r.get("poster_name") if user["id"] != r["poster_id"] else "Bidders"
         threads.append({
             "context_type": "request", "context_id": r["id"], "title": r["title"],
+            "with_name": with_name, "last_message": last["body"], "last_at": last["created_at"], "unread": unread,
+        })
+
+    driver_job_ids = [
+        app["job_id"] async for app in db.driver_applications.find({"driver_id": user["id"]}, {"_id": 0, "job_id": 1})
+    ]
+    async for j in db.driver_jobs.find(
+        {"$or": [{"poster_id": user["id"]}, {"id": {"$in": driver_job_ids}}]},
+        {"_id": 0, "id": 1, "title": 1, "poster_id": 1, "poster_name": 1},
+    ):
+        last = await db.messages.find_one(
+            {"context_type": "job", "context_id": j["id"]}, {"_id": 0}, sort=[("created_at", -1)]
+        )
+        if not last:
+            continue
+        unread = await db.messages.count_documents(
+            {"context_type": "job", "context_id": j["id"], "read_by": {"$ne": user["id"]}}
+        )
+        with_name = j.get("poster_name") if user["id"] != j["poster_id"] else "Applicants"
+        threads.append({
+            "context_type": "job", "context_id": j["id"], "title": j["title"],
             "with_name": with_name, "last_message": last["body"], "last_at": last["created_at"], "unread": unread,
         })
 
@@ -1831,23 +1934,195 @@ async def create_bid(rid: str, data: BidIn, user: dict = Depends(require("vendor
 
 @api.post("/requests/{rid}/accept")
 async def accept_bid(rid: str, data: AcceptBidIn, user: dict = Depends(get_current_user)):
+    """Accepting a bid now means paying for it — same pattern as booking
+    payment. This creates a Stripe Checkout session; the bid/request only
+    actually move to 'accepted'/'awarded' once the webhook confirms payment."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments are not configured yet")
     req = await db.requests.find_one({"id": rid})
     if not req or req["poster_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Request not found")
+    if req["status"] != "open":
+        raise HTTPException(status_code=400, detail="This job is no longer open")
     bid = await db.bids.find_one({"id": data.bid_id, "request_id": rid})
     if not bid:
         raise HTTPException(status_code=404, detail="Bid not found")
-    await db.requests.update_one({"id": rid}, {"$set": {"status": "awarded", "accepted_bid_id": data.bid_id}})
-    await db.bids.update_one({"id": data.bid_id}, {"$set": {"status": "accepted"}})
-    await db.bids.update_many({"request_id": rid, "id": {"$ne": data.bid_id}}, {"$set": {"status": "rejected"}})
-    await notify(
-        bid["vendor_id"],
-        "Your bid was accepted",
-        f"You won the job: {req['title']}. Contact the poster to proceed.",
-        "bid_accepted",
-        {"request_id": rid},
+
+    vendor = await db.users.find_one({"id": bid["vendor_id"]}, {"_id": 0, "stripe_account_id": 1})
+    vendor_acct = (vendor or {}).get("stripe_account_id")
+    if not vendor_acct:
+        raise HTTPException(status_code=400, detail="This vendor hasn't connected a payout account yet")
+
+    settings = await get_settings()
+    rate = settings.get("roadside_commission_rate", 0.08)
+    price_cents = int(round(bid["price"] * 100))
+    app_cut_cents = int(round(price_cents * rate))
+
+    def _create_session():
+        return stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            customer_creation="always",
+            line_items=[{
+                "price_data": {"currency": "usd", "product_data": {"name": req["title"]}, "unit_amount": price_cents},
+                "quantity": 1,
+            }],
+            payment_intent_data={
+                "application_fee_amount": app_cut_cents,
+                "transfer_data": {"destination": vendor_acct},
+            },
+            success_url=f"{FRONTEND_URL}/request/{rid}?paid=1",
+            cancel_url=f"{FRONTEND_URL}/request/{rid}",
+            metadata={"request_id": rid, "bid_id": data.bid_id},
+        )
+
+    try:
+        session = await run_in_threadpool(_create_session)
+    except Exception as e:
+        logger.error(f"stripe checkout failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start checkout")
+    return {"checkout_url": session.url}
+
+
+# ========================================================= DRIVER HIRING ======
+# A completely separate marketplace from truck/trailer rental: owners post
+# open driving jobs (free — RigRent doesn't charge employers to post), and
+# truckers who opt in build a simple profile and apply. Structurally the
+# same shape as the roadside requests/bids system above (poster + applicants).
+@api.post("/driver-profile")
+async def update_driver_profile(data: DriverProfileIn, user: dict = Depends(require("renter", "admin"))):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"driver_profile": data.dict()}})
+    return {"ok": True, "driver_profile": data.dict()}
+
+
+@api.get("/drivers")
+async def list_drivers(cdl_class: Optional[str] = None):
+    """Owners browse truckers who've opted in to being found for hire."""
+    query = {"role": "renter", "driver_profile.open_to_work": True}
+    if cdl_class:
+        query["driver_profile.cdl_class"] = cdl_class
+    items = await db.users.find(
+        query, {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1}
+    ).to_list(200)
+    return items
+
+
+@api.get("/users/{uid}/driver-profile")
+async def get_driver_profile(uid: str, user: dict = Depends(get_current_user)):
+    target = await db.users.find_one(
+        {"id": uid}, {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1}
     )
-    return {"ok": True}
+    if not target:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    return target
+
+
+@api.post("/driver-jobs")
+async def create_driver_job(data: DriverJobIn, user: dict = Depends(require("owner", "admin"))):
+    job = {
+        "id": str(uuid.uuid4()),
+        "poster_id": user["id"],
+        "poster_name": user["name"],
+        **data.dict(),
+        "status": "open",
+        "hired_application_id": None,
+        "created_at": now_iso(),
+    }
+    await db.driver_jobs.insert_one(dict(job))
+    job.pop("_id", None)
+    return job
+
+
+@api.get("/driver-jobs")
+async def list_driver_jobs(user: dict = Depends(get_current_user)):
+    if user["role"] in ("renter", "admin"):
+        items = await db.driver_jobs.find({"status": "open"}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    else:
+        items = await db.driver_jobs.find({"poster_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.get("/driver-jobs/{jid}")
+async def get_driver_job(jid: str, user: dict = Depends(get_current_user)):
+    job = await db.driver_jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["poster_id"] == user["id"]:
+        applications = await db.driver_applications.find({"job_id": jid}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        job["applications"] = applications
+    else:
+        mine = await db.driver_applications.find_one({"job_id": jid, "driver_id": user["id"]}, {"_id": 0})
+        job["my_application"] = mine
+    return job
+
+
+@api.post("/driver-jobs/{jid}/apply")
+async def apply_to_driver_job(jid: str, data: DriverApplicationIn, user: dict = Depends(require("renter", "admin"))):
+    job = await db.driver_jobs.find_one({"id": jid})
+    if not job or job["status"] != "open":
+        raise HTTPException(status_code=404, detail="Job not found or no longer open")
+    existing = await db.driver_applications.find_one({"job_id": jid, "driver_id": user["id"]})
+    if existing:
+        raise HTTPException(status_code=400, detail="You already applied to this job")
+
+    application = {
+        "id": str(uuid.uuid4()),
+        "job_id": jid,
+        "driver_id": user["id"],
+        "driver_name": user["name"],
+        "note": data.note,
+        "status": "pending",
+        "created_at": now_iso(),
+    }
+    await db.driver_applications.insert_one(dict(application))
+    application.pop("_id", None)
+    await notify(job["poster_id"], "New driver application", f"{user['name']} applied to {job['title']}.", "driver_application", {"job_id": jid})
+    return application
+
+
+@api.post("/driver-jobs/{jid}/hire")
+async def hire_driver(jid: str, data: AcceptBidIn, user: dict = Depends(get_current_user)):
+    """Reuses AcceptBidIn's shape ({bid_id}) — here bid_id is the application
+    id. Hiring now means paying a flat placement fee — no percentage, since
+    there's no structured dollar amount for a driving job the way there is
+    for a rental or a repair bid. Posting a job itself is still free; the fee
+    only applies once you actually hire someone. The fee goes entirely to
+    RigRent (no other party to split it with), so no Connect transfer needed."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments are not configured yet")
+    job = await db.driver_jobs.find_one({"id": jid})
+    if not job or job["poster_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "open":
+        raise HTTPException(status_code=400, detail="This job is no longer open")
+    application = await db.driver_applications.find_one({"id": data.bid_id, "job_id": jid})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    settings = await get_settings()
+    fee = settings.get("driver_placement_fee", 49.0)
+    fee_cents = int(round(fee * 100))
+
+    def _create_session():
+        return stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            customer_creation="always",
+            line_items=[{
+                "price_data": {"currency": "usd", "product_data": {"name": f"Placement fee \u2014 {job['title']}"}, "unit_amount": fee_cents},
+                "quantity": 1,
+            }],
+            success_url=f"{FRONTEND_URL}/driver-jobs/{jid}?hired=1",
+            cancel_url=f"{FRONTEND_URL}/driver-jobs/{jid}",
+            metadata={"job_id": jid, "application_id": data.bid_id},
+        )
+
+    try:
+        session = await run_in_threadpool(_create_session)
+    except Exception as e:
+        logger.error(f"stripe checkout failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start checkout")
+    return {"checkout_url": session.url}
 
 
 # ================================================================= ADMIN ======
