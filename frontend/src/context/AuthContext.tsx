@@ -20,7 +20,8 @@ export type User = {
     endorsements?: string[];
     availability?: string;
     bio?: string;
-    home_location?: string;
+    home_state?: string;
+    phone_number?: string;
     resume_path?: string;
   };
 };
