@@ -7,7 +7,7 @@ import { Txt, Display, Icon, Loader, Badge } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 
 type Thread = {
-  context_type: "booking" | "request";
+  context_type: "booking" | "request" | "job";
   context_id: string;
   title: string;
   with_name: string;
@@ -48,7 +48,7 @@ export default function Messages() {
               style={styles.row}
             >
               <View style={styles.iconWrap}>
-                <Icon name={item.context_type === "booking" ? "truck" : "wrench"} size={20} color={colors.brand} />
+                <Icon name={item.context_type === "booking" ? "truck" : item.context_type === "job" ? "account-hard-hat" : "wrench"} size={20} color={colors.brand} />
               </View>
               <View style={{ flex: 1, gap: 2 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
