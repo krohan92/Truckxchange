@@ -54,6 +54,14 @@ export default function DriverProfileView() {
           </View>
           {p.years_experience != null ? <Txt><Txt weight="bold">{p.years_experience}</Txt> years of experience</Txt> : null}
           {p.home_state ? <Txt color={colors.onSurfaceSecondary}>Based in {p.home_state}</Txt> : null}
+          {(p.equipment_experience || []).length > 0 ? (
+            <View>
+              <Txt size={type.sm} color={colors.onSurfaceSecondary} weight="medium" style={{ marginBottom: spacing.xs }}>Equipment experience</Txt>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+                {p.equipment_experience.map((e: string) => <Badge key={e} label={e} tone="brand" />)}
+              </View>
+            </View>
+          ) : null}
           {p.bio ? <Txt color={colors.onSurfaceTertiary} style={{ lineHeight: 22, marginTop: spacing.sm }}>{p.bio}</Txt> : null}
         </Card>
 
