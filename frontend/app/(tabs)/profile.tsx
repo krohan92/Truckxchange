@@ -18,6 +18,8 @@ export default function Profile() {
   const { t, i18n } = useTranslation();
   const { user, logout, refresh } = useAuth();
   const [rate, setRate] = useState(0.05);
+  const [roadsideRate, setRoadsideRate] = useState(0.08);
+  const [placementFee, setPlacementFee] = useState(49);
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
   const [connectBusy, setConnectBusy] = useState(false);
   const [reseedBusy, setReseedBusy] = useState(false);
@@ -28,7 +30,11 @@ export default function Profile() {
   useFocusEffect(useCallback(() => {
     refresh();
     if (user?.role === "admin") {
-      apiFetch<any>("/settings").then((s) => setRate(s.commission_rate)).catch(() => {});
+      apiFetch<any>("/settings").then((s) => {
+        setRate(s.commission_rate);
+        setRoadsideRate(s.roadside_commission_rate);
+        setPlacementFee(s.driver_placement_fee);
+      }).catch(() => {});
     }
     apiFetch<any>("/stripe/status").then(setPayoutStatus).catch(() => {});
   }, [user?.role]));
@@ -37,6 +43,18 @@ export default function Profile() {
     const next = Math.min(0.5, Math.max(0, +(rate + delta).toFixed(2)));
     setRate(next);
     try { await apiFetch("/settings", { method: "POST", body: { commission_rate: next } }); } catch {}
+  };
+
+  const updateRoadsideRate = async (delta: number) => {
+    const next = Math.min(0.5, Math.max(0, +(roadsideRate + delta).toFixed(2)));
+    setRoadsideRate(next);
+    try { await apiFetch("/settings", { method: "POST", body: { roadside_commission_rate: next } }); } catch {}
+  };
+
+  const updatePlacementFee = async (delta: number) => {
+    const next = Math.max(0, placementFee + delta);
+    setPlacementFee(next);
+    try { await apiFetch("/settings", { method: "POST", body: { driver_placement_fee: next } }); } catch {}
   };
 
   if (!user) return null;
@@ -97,6 +115,24 @@ export default function Profile() {
           </Card>
         )}
 
+        {isRenter && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>DRIVING JOBS</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Fill out a driver profile so fleet owners can find and hire you, or browse open jobs.</Txt>
+            <Btn title="My Driver Profile" icon="account-hard-hat" variant="secondary" onPress={() => router.push("/driver-profile")} testID="my-driver-profile-btn" />
+            <Btn title="Browse Driving Jobs" icon="briefcase-search" variant="ghost" onPress={() => router.push("/driver-jobs")} testID="browse-driver-jobs-btn" />
+          </Card>
+        )}
+
+        {user.role === "owner" && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>HIRE DRIVERS</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Post a free driving job or browse truckers looking for work.</Txt>
+            <Btn title="Post a Driving Job" icon="bullhorn" variant="secondary" onPress={() => router.push("/driver-jobs/create")} testID="post-driver-job-btn" />
+            <Btn title="Browse Drivers" icon="account-search" variant="ghost" onPress={() => router.push("/drivers")} testID="browse-drivers-btn" />
+          </Card>
+        )}
+
         {isAdmin && (
           <Card style={{ gap: spacing.md }}>
             <Display size={type.lg}>PLATFORM COMMISSION</Display>
@@ -109,6 +145,24 @@ export default function Profile() {
               </View>
               <Pressable testID="rate-plus" onPress={() => updateRate(0.01)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
             </View>
+
+            <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ marginTop: spacing.sm }}>Roadside repair/tow commission — taken when a poster accepts and pays a bid.</Txt>
+            <View style={styles.stepper}>
+              <Pressable testID="roadside-rate-minus" onPress={() => updateRoadsideRate(-0.01)} style={styles.stepBtn}><Icon name="minus" size={22} color={colors.onSurface} /></Pressable>
+              <View style={{ alignItems: "center" }}>
+                <Display size={type.huge} color={colors.brand}>{Math.round(roadsideRate * 100)}%</Display>
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>Vendor keeps {Math.round((1 - roadsideRate) * 100)}%</Txt>
+              </View>
+              <Pressable testID="roadside-rate-plus" onPress={() => updateRoadsideRate(0.01)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+
+            <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ marginTop: spacing.sm }}>Driver placement fee — charged to the employer only when they hire someone. Posting jobs stays free.</Txt>
+            <View style={styles.stepper}>
+              <Pressable testID="fee-minus" onPress={() => updatePlacementFee(-5)} style={styles.stepBtn}><Icon name="minus" size={22} color={colors.onSurface} /></Pressable>
+              <Display size={type.huge} color={colors.brand}>${placementFee}</Display>
+              <Pressable testID="fee-plus" onPress={() => updatePlacementFee(5)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+
             <Btn title="Review Verifications" icon="clipboard-check" variant="secondary" onPress={() => router.push("/admin")} testID="admin-review-btn" />
             <Btn title="Review Disputes" icon="scale-balance" variant="secondary" onPress={() => router.push("/admin-disputes")} testID="admin-disputes-btn" />
             <Btn
