@@ -17,7 +17,6 @@ export default function Profile() {
   const router = useRouter();
   const { t, i18n } = useTranslation();
   const { user, logout, refresh } = useAuth();
-  const [rate, setRate] = useState(0.05);
   const [roadsideRate, setRoadsideRate] = useState(0.08);
   const [placementFee, setPlacementFee] = useState(49);
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
@@ -26,23 +25,60 @@ export default function Profile() {
   const [serviceRadius, setServiceRadius] = useState("50");
   const [serviceAreaBusy, setServiceAreaBusy] = useState(false);
   const [serviceAreaSaved, setServiceAreaSaved] = useState(false);
+  const [subStatus, setSubStatus] = useState<any>(null);
+  const [subTiers, setSubTiers] = useState<Record<string, any> | null>(null);
+  const [driverSeatPrice, setDriverSeatPrice] = useState(2.99);
+  const [roster, setRoster] = useState<any[]>([]);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState<string | null>(null);
+  const [tierSaving, setTierSaving] = useState<string | null>(null);
 
   useFocusEffect(useCallback(() => {
     refresh();
     if (user?.role === "admin") {
       apiFetch<any>("/settings").then((s) => {
-        setRate(s.commission_rate);
         setRoadsideRate(s.roadside_commission_rate);
         setPlacementFee(s.driver_placement_fee);
       }).catch(() => {});
+      apiFetch<any>("/subscription/tiers").then((s) => { setSubTiers(s.tiers); setDriverSeatPrice(s.driver_seat_price); }).catch(() => {});
+    }
+    if (user?.role === "owner") {
+      apiFetch<any>("/subscription/status").then(setSubStatus).catch(() => {});
+      apiFetch<any>("/subscription/tiers").then((s) => setSubTiers(s.tiers)).catch(() => {});
+      apiFetch<any[]>("/roster/mine").then(setRoster).catch(() => {});
     }
     apiFetch<any>("/stripe/status").then(setPayoutStatus).catch(() => {});
   }, [user?.role]));
 
-  const updateRate = async (delta: number) => {
-    const next = Math.min(0.5, Math.max(0, +(rate + delta).toFixed(2)));
-    setRate(next);
-    try { await apiFetch("/settings", { method: "POST", body: { commission_rate: next } }); } catch {}
+  const cancelSubscription = async () => {
+    setCancelBusy(true);
+    try {
+      await apiFetch("/subscription/cancel", { method: "POST" });
+      setSubStatus((s: any) => ({ ...s, subscription_status: "canceled", subscription_tier: null }));
+      await refresh();
+    } catch {}
+    finally { setCancelBusy(false); }
+  };
+
+  const removeDriver = async (driverId: string) => {
+    setRemoveBusy(driverId);
+    try {
+      await apiFetch(`/roster/${driverId}/remove`, { method: "POST" });
+      setRoster((r) => r.filter((d) => d.driver_id !== driverId));
+    } catch {}
+    finally { setRemoveBusy(null); }
+  };
+
+  const saveTier = async (key: string, field: string, value: string) => {
+    setTierSaving(key);
+    try {
+      const num = parseFloat(value);
+      const body: any = {};
+      body[field] = isNaN(num) ? null : num;
+      const res = await apiFetch<{ tiers: any }>(`/admin/subscription-tiers/${key}`, { method: "POST", body });
+      setSubTiers(res.tiers);
+    } catch {}
+    finally { setTierSaving(null); }
   };
 
   const updateRoadsideRate = async (delta: number) => {
@@ -126,6 +162,31 @@ export default function Profile() {
 
         {user.role === "owner" && (
           <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>SUBSCRIPTION</Display>
+            {subStatus?.subscription_status === "active" ? (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Badge label={subTiers?.[subStatus.subscription_tier]?.name ?? subStatus.subscription_tier} tone="success" />
+                  <Txt size={type.sm} color={colors.onSurfaceSecondary}>{subStatus.truck_count} truck{subStatus.truck_count === 1 ? "" : "s"} listed</Txt>
+                </View>
+                <Btn title="Change Plan" icon="swap-horizontal" variant="secondary" onPress={() => router.push("/subscribe")} testID="change-plan-btn" />
+                <Btn title="Cancel Subscription" icon="close-circle-outline" variant="ghost" onPress={cancelSubscription} loading={cancelBusy} testID="cancel-subscription-btn" />
+              </>
+            ) : (
+              <>
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>
+                  {subStatus?.subscription_status === "canceled" || subStatus?.subscription_status === "past_due"
+                    ? "Your subscription has lapsed — your listings are hidden until you subscribe again."
+                    : "An active plan is required to list trucks/trailers. Rental commission is 0% — you keep 100% of every rental."}
+                </Txt>
+                <Btn title="Choose a Plan" icon="star-outline" onPress={() => router.push("/subscribe")} testID="choose-plan-btn" />
+              </>
+            )}
+          </Card>
+        )}
+
+        {user.role === "owner" && (
+          <Card style={{ gap: spacing.md }}>
             <Display size={type.lg}>HIRE DRIVERS</Display>
             <Txt size={type.sm} color={colors.onSurfaceSecondary}>Post a free driving job or browse truckers looking for work.</Txt>
             <Btn title="Post a Driving Job" icon="bullhorn" variant="secondary" onPress={() => router.push("/driver-jobs/create")} testID="post-driver-job-btn" />
@@ -133,18 +194,34 @@ export default function Profile() {
           </Card>
         )}
 
+        {user.role === "owner" && roster.length > 0 && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>YOUR ROSTER</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>
+              Drivers you've hired through RigRent. Each active seat is billed ${driverSeatPrice.toFixed(2)}/month, regardless of this — removing a driver here only stops their billing and doesn't affect their own account or app access.
+            </Txt>
+            {roster.map((d) => (
+              <View key={d.driver_id} style={styles.rosterRow}>
+                <View style={{ flex: 1 }}>
+                  <Txt weight="bold">{d.driver_name}</Txt>
+                  <Txt size={type.sm} color={colors.onSurfaceSecondary}>Hired {new Date(d.hired_at).toLocaleDateString()}</Txt>
+                </View>
+                <Btn
+                  title="Remove"
+                  variant="ghost"
+                  loading={removeBusy === d.driver_id}
+                  onPress={() => removeDriver(d.driver_id)}
+                  testID={`remove-roster-${d.driver_id}`}
+                />
+              </View>
+            ))}
+          </Card>
+        )}
+
         {isAdmin && (
           <Card style={{ gap: spacing.md }}>
             <Display size={type.lg}>PLATFORM COMMISSION</Display>
-            <Txt size={type.sm} color={colors.onSurfaceSecondary}>The cut RigRent takes on every booking. Owners keep the rest.</Txt>
-            <View style={styles.stepper}>
-              <Pressable testID="rate-minus" onPress={() => updateRate(-0.01)} style={styles.stepBtn}><Icon name="minus" size={22} color={colors.onSurface} /></Pressable>
-              <View style={{ alignItems: "center" }}>
-                <Display size={type.huge} color={colors.brand}>{Math.round(rate * 100)}%</Display>
-                <Txt size={type.sm} color={colors.onSurfaceSecondary}>Owner keeps {Math.round((1 - rate) * 100)}%</Txt>
-              </View>
-              <Pressable testID="rate-plus" onPress={() => updateRate(0.01)} style={styles.stepBtn}><Icon name="plus" size={22} color={colors.onSurface} /></Pressable>
-            </View>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Rental commission is 0% — owners keep 100% of every rental. RigRent's revenue on the rental side comes from owner subscriptions instead (see Subscription Plans below).</Txt>
 
             <Txt size={type.sm} color={colors.onSurfaceSecondary} style={{ marginTop: spacing.sm }}>Roadside repair/tow commission — taken when a poster accepts and pays a bid.</Txt>
             <View style={styles.stepper}>
@@ -179,6 +256,61 @@ export default function Profile() {
               }}
               testID="reseed-listings-btn"
             />
+          </Card>
+        )}
+
+        {isAdmin && subTiers && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>SUBSCRIPTION PLANS</Display>
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>What owners pay to list trucks/trailers. Starter and Growth are flat monthly fees up to a truck limit; Enterprise is uncapped and bills per truck instead.</Txt>
+            {(["starter", "growth", "enterprise"] as const).map((key) => {
+              const tier = subTiers[key];
+              if (!tier) return null;
+              const isEnterprise = key === "enterprise";
+              return (
+                <View key={key} style={styles.tierEditRow}>
+                  <Txt weight="bold">{tier.name}</Txt>
+                  <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <View style={{ flex: 1 }}>
+                      <Field
+                        label={isEnterprise ? "Price / truck ($)" : "Price / month ($)"}
+                        keyboardType="decimal-pad"
+                        defaultValue={String(isEnterprise ? tier.price_per_truck : tier.price)}
+                        onEndEditing={(e) => saveTier(key, isEnterprise ? "price_per_truck" : "price", e.nativeEvent.text)}
+                        testID={`tier-${key}-price`}
+                      />
+                    </View>
+                    {!isEnterprise && (
+                      <View style={{ flex: 1 }}>
+                        <Field
+                          label="Truck limit"
+                          keyboardType="number-pad"
+                          defaultValue={String(tier.truck_limit)}
+                          onEndEditing={(e) => saveTier(key, "truck_limit", e.nativeEvent.text)}
+                          testID={`tier-${key}-limit`}
+                        />
+                      </View>
+                    )}
+                  </View>
+                  {tierSaving === key ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>Saving…</Txt> : null}
+                </View>
+              );
+            })}
+            <Field
+              label="Driver-seat price ($/month, per hired driver)"
+              keyboardType="decimal-pad"
+              defaultValue={String(driverSeatPrice)}
+              onEndEditing={async (e) => {
+                const num = parseFloat(e.nativeEvent.text);
+                if (isNaN(num)) return;
+                try {
+                  await apiFetch("/admin/driver-seat-price", { method: "POST", body: { driver_seat_price: num } });
+                  setDriverSeatPrice(num);
+                } catch {}
+              }}
+              testID="driver-seat-price-input"
+            />
+            <Txt size={type.sm} color={colors.onSurfaceSecondary}>Only applies to new driver-seat subscriptions — owners already being billed keep their existing rate.</Txt>
           </Card>
         )}
 
@@ -260,4 +392,6 @@ const styles = StyleSheet.create({
   avatar: { width: 80, height: 80, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm },
   stepBtn: { width: 52, height: 52, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" },
+  tierEditRow: { gap: spacing.xs, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  rosterRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
 });
