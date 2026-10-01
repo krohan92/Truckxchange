@@ -25,6 +25,8 @@ export type User = {
     phone_number?: string;
     resume_path?: string;
   };
+  subscription_status?: "none" | "active" | "past_due" | "unpaid" | "incomplete_expired" | "canceled";
+  subscription_tier?: "starter" | "growth" | "enterprise" | null;
 };
 
 type AuthCtx = {
