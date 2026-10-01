@@ -232,6 +232,21 @@ class SettingsIn(BaseModel):
     driver_placement_fee: Optional[float] = Field(None, ge=0, le=1000)
 
 
+class SubscriptionTierIn(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = Field(None, ge=0, le=10000)  # flat monthly price, tiers with a truck_limit
+    price_per_truck: Optional[float] = Field(None, ge=0, le=1000)  # per-truck price, uncapped tiers
+    truck_limit: Optional[int] = Field(None, ge=1, le=100000)  # None = uncapped
+
+
+class SubscribeIn(BaseModel):
+    tier: Literal["starter", "growth", "enterprise"]
+
+
+class DriverSeatPriceIn(BaseModel):
+    driver_seat_price: float = Field(..., ge=0, le=1000)
+
+
 class ReviewIn(BaseModel):
     approved: bool
     note: Optional[str] = ""
@@ -351,6 +366,8 @@ def public_user(u: dict) -> dict:
         "renter_rating": u.get("renter_rating", 0),
         "renter_rating_count": u.get("renter_rating_count", 0),
         "driver_profile": u.get("driver_profile"),
+        "subscription_status": u.get("subscription_status", "none"),
+        "subscription_tier": u.get("subscription_tier"),
     }
 
 
@@ -376,6 +393,24 @@ def require(*roles: str):
     return dep
 
 
+# Owner subscriptions are now RigRent's only revenue source from the rental
+# side (rental commission is 0% — see create_booking). Starter/Growth are flat
+# monthly fees up to a truck limit; Enterprise has no cap and bills per truck
+# instead. These are DB-backed (see get_settings) so admins can retune pricing
+# without a code deploy — the values below are only the seed/fallback.
+DEFAULT_SUBSCRIPTION_TIERS = {
+    "starter": {"name": "Starter", "price": 29.99, "truck_limit": 10},
+    "growth": {"name": "Growth", "price": 49.99, "truck_limit": 20},
+    "enterprise": {"name": "Enterprise", "price_per_truck": 5.00, "truck_limit": None},
+}
+# What an owner is billed, per month, for each driver currently on their
+# roster (i.e. currently hired via the driver-jobs marketplace). This is
+# billed to the OWNER's Stripe customer — it has no effect on the driver's
+# own ability to use RigRent (browsing/applying to jobs, renting trucks or
+# trailers as a renter is unrelated to any owner's subscription or roster).
+DEFAULT_DRIVER_SEAT_PRICE = 2.99
+
+
 async def get_settings() -> dict:
     s = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not s:
@@ -387,10 +422,174 @@ async def get_settings() -> dict:
         updates["roadside_commission_rate"] = 0.08
     if "driver_placement_fee" not in s:
         updates["driver_placement_fee"] = 49.0
+    if "subscription_tiers" not in s:
+        updates["subscription_tiers"] = DEFAULT_SUBSCRIPTION_TIERS
+    else:
+        # If an old Starter/Growth/Fleet structure is sitting in the DB from
+        # an earlier build, it won't have the right keys/shape for the new
+        # Starter/Growth/Enterprise model — patch in whichever tier keys are
+        # missing rather than clobbering any admin edits already made to
+        # tiers that DO match the new shape.
+        tiers = dict(s["subscription_tiers"])
+        changed = False
+        for key, default in DEFAULT_SUBSCRIPTION_TIERS.items():
+            if key not in tiers or not isinstance(tiers[key], dict):
+                tiers[key] = default
+                changed = True
+        for stale_key in list(tiers.keys()):
+            if stale_key not in DEFAULT_SUBSCRIPTION_TIERS:
+                tiers.pop(stale_key)
+                changed = True
+        if changed:
+            updates["subscription_tiers"] = tiers
+    if "driver_seat_price" not in s:
+        updates["driver_seat_price"] = DEFAULT_DRIVER_SEAT_PRICE
     if updates:
         await db.settings.update_one({"id": "global"}, {"$set": updates})
         s.update(updates)
     return s
+
+
+async def active_roster_count(owner_id: str) -> int:
+    return await db.roster.count_documents({"owner_id": owner_id, "status": "active"})
+
+
+async def check_subscription_allows_new_listing(user: dict, settings: dict):
+    """Gate: an owner must have an active subscription to list a truck/trailer
+    at all, and Starter/Growth are capped at their truck_limit. Enterprise has
+    no cap (owners on it are billed per truck instead — see
+    sync_enterprise_truck_quantity)."""
+    if user["role"] == "admin":
+        return
+    status = user.get("subscription_status")
+    tier_key = user.get("subscription_tier")
+    tiers = settings.get("subscription_tiers", DEFAULT_SUBSCRIPTION_TIERS)
+    if status != "active" or not tier_key or tier_key not in tiers:
+        raise HTTPException(
+            status_code=402,
+            detail="An active subscription plan is required to list a truck or trailer. Choose a plan to continue.",
+        )
+    tier = tiers[tier_key]
+    limit = tier.get("truck_limit")
+    if limit is not None:
+        current = await db.listings.count_documents({"owner_id": user["id"], "deleted_at": None})
+        if current >= limit:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Your {tier.get('name', tier_key)} plan allows up to {limit} trucks/trailers. Upgrade your plan to list more.",
+            )
+
+
+async def sync_enterprise_truck_quantity(owner: dict):
+    """Enterprise owners are billed $/truck via a quantity-based Stripe
+    subscription item, so the quantity has to track their live truck count
+    any time a listing is added or removed. No-op for anyone not on
+    Enterprise, or without a subscription item to update yet."""
+    if not STRIPE_SECRET_KEY:
+        return
+    if owner.get("subscription_tier") != "enterprise" or owner.get("subscription_status") != "active":
+        return
+    item_id = owner.get("subscription_item_id")
+    if not item_id:
+        return
+    count = await db.listings.count_documents({"owner_id": owner["id"], "deleted_at": None})
+    qty = max(count, 1)  # Stripe subscription item quantities must be >= 1
+
+    def _update():
+        stripe.SubscriptionItem.modify(item_id, quantity=qty)
+
+    try:
+        await run_in_threadpool(_update)
+    except Exception as e:
+        logger.error(f"failed to sync enterprise truck quantity for {owner['id']}: {e}")
+
+
+async def sync_driver_seat_quantity(owner_id: str):
+    """The $/driver-seat subscription's quantity tracks the owner's live
+    active-roster count. Called whenever a driver is hired or removed from
+    the roster. No-op if the owner has no driver-seat subscription yet
+    (nothing to sync) — that subscription is only created on first hire."""
+    if not STRIPE_SECRET_KEY:
+        return
+    owner = await db.users.find_one({"id": owner_id}, {"_id": 0})
+    if not owner:
+        return
+    item_id = owner.get("driver_subscription_item_id")
+    count = await active_roster_count(owner_id)
+    if not item_id:
+        return  # created lazily by ensure_driver_seat_subscription on first hire
+    if count == 0:
+        # No drivers left on roster — cancel the subscription outright rather
+        # than leaving a $0-ish or 1-minimum quantity sub running.
+        sub_id = owner.get("driver_subscription_id")
+
+        def _cancel():
+            if sub_id:
+                stripe.Subscription.delete(sub_id)
+
+        try:
+            await run_in_threadpool(_cancel)
+        except Exception as e:
+            logger.error(f"failed to cancel driver-seat subscription for {owner_id}: {e}")
+        await db.users.update_one(
+            {"id": owner_id},
+            {"$set": {"driver_subscription_id": None, "driver_subscription_item_id": None}},
+        )
+        return
+
+    def _update():
+        stripe.SubscriptionItem.modify(item_id, quantity=count)
+
+    try:
+        await run_in_threadpool(_update)
+    except Exception as e:
+        logger.error(f"failed to sync driver seat quantity for {owner_id}: {e}")
+
+
+async def ensure_driver_seat_subscription(owner: dict, settings: dict) -> Optional[dict]:
+    """Lazily creates the $/driver-seat recurring subscription the first time
+    an owner hires a driver (roster count goes 0 -> 1+). Returns a
+    {checkout_url} the owner must complete if they don't have a saved payment
+    method on file yet, or None if the existing subscription's quantity was
+    simply bumped."""
+    if not STRIPE_SECRET_KEY:
+        return None
+    if owner.get("driver_subscription_item_id"):
+        await sync_driver_seat_quantity(owner["id"])
+        return None
+
+    seat_price = settings.get("driver_seat_price", DEFAULT_DRIVER_SEAT_PRICE)
+    seat_price_cents = int(round(seat_price * 100))
+    count = await active_roster_count(owner["id"])
+    qty = max(count, 1)
+
+    def _create_session():
+        kwargs = dict(
+            mode="subscription",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "RigRent driver seat"},
+                    "unit_amount": seat_price_cents,
+                    "recurring": {"interval": "month"},
+                },
+                "quantity": qty,
+            }],
+            success_url=f"{FRONTEND_URL}/profile?driver_billing=1",
+            cancel_url=f"{FRONTEND_URL}/profile",
+            metadata={"purpose": "driver_seats", "owner_id": owner["id"]},
+        )
+        if owner.get("stripe_customer_id"):
+            kwargs["customer"] = owner["stripe_customer_id"]
+        return stripe.checkout.Session.create(**kwargs)
+
+    try:
+        session = await run_in_threadpool(_create_session)
+    except Exception as e:
+        logger.error(f"failed to create driver-seat subscription checkout for {owner['id']}: {e}")
+        return None
+    return {"checkout_url": session.url}
 
 
 def _send_expo_push(tokens: list, title: str, body: str, data: dict):
@@ -702,11 +901,14 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
         raise HTTPException(status_code=400, detail="DOT number and insurance details are required for compliance.")
     if compute_expired(data.insurance_expiry) is True:
         raise HTTPException(status_code=400, detail="Insurance is expired. Update your policy before listing this rig.")
+    settings = await get_settings()
+    await check_subscription_allows_new_listing(user, settings)
     listing = {
         "id": str(uuid.uuid4()),
         "owner_id": user["id"],
         "owner_name": user["name"],
         **data.dict(),
+        "hidden": False,
         "rating": 0,
         "rating_count": 0,
         "active": True,
@@ -717,6 +919,8 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
     if data.latitude is not None and data.longitude is not None:
         listing["geo"] = {"type": "Point", "coordinates": [data.longitude, data.latitude]}
     await db.listings.insert_one(dict(listing))
+    if user["role"] == "owner":
+        await sync_enterprise_truck_quantity(user)
     listing.pop("_id", None)
     return listing
 
@@ -731,7 +935,7 @@ async def list_listings(
     lng: Optional[float] = None,
     radius_mi: Optional[float] = None,
 ):
-    query = {"active": True, "deleted_at": None}
+    query = {"active": True, "deleted_at": None, "hidden": {"$ne": True}}
     if category and category != "All":
         query["category"] = category
     if kind:
@@ -860,6 +1064,8 @@ async def delete_listing(lid: str, user: dict = Depends(require("owner", "admin"
     if not item or item["owner_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Listing not found")
     await db.listings.update_one({"id": lid}, {"$set": {"deleted_at": now_iso(), "active": False}})
+    if user["role"] == "owner":
+        await sync_enterprise_truck_quantity(user)
     return {"ok": True}
 
 
@@ -887,8 +1093,11 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
                 detail=f"This rig is already booked {conflict['start_date']} to {conflict['end_date']}. Pick different dates.",
             )
 
-    settings = await get_settings()
-    rate = settings["commission_rate"]
+    # Rental commission is 0% — RigRent's revenue on the rental side comes
+    # from owner subscriptions instead (see /subscribe), so the owner keeps
+    # 100% of every rental. `commission_rate`/`app_cut` fields are kept at 0
+    # rather than removed, so nothing downstream that reads them breaks.
+    rate = 0.0
     ppm = listing.get("price_per_mile") or 0
     daily_rate = listing.get("daily_rate") or 0
     included_per_day = listing.get("included_miles_per_day")
@@ -1132,9 +1341,7 @@ async def bill_extra_charges(booking: dict, charges: list, note: str = ""):
         )
         return {"charges": charges, "total": total, "billed": False}
 
-    settings = await get_settings()
-    app_fee_cents = int(round(total_cents * settings["commission_rate"]))
-
+    # Rental commission is 0% — no application fee on extras billing either.
     owner_user = await db.users.find_one({"id": booking["owner_id"]}, {"_id": 0, "stripe_account_id": 1})
     owner_stripe_account = (owner_user or {}).get("stripe_account_id")
     if not owner_stripe_account:
@@ -1148,7 +1355,6 @@ async def bill_extra_charges(booking: dict, charges: list, note: str = ""):
             payment_method=payment_method_id,
             off_session=True,
             confirm=True,
-            application_fee_amount=app_fee_cents,
             transfer_data={"destination": owner_stripe_account},
             metadata={"booking_id": booking["id"], "kind": "trip_extras"},
         )
@@ -1494,7 +1700,9 @@ async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Owner hasn't connected a payout account yet")
 
     subtotal_cents = int(round(booking["subtotal"] * 100))
-    app_cut_cents = int(round(booking["app_cut"] * 100))
+    # No application fee — rental commission is 0%, owner gets the full
+    # transfer. RigRent's cut of the rental side comes from the owner's
+    # subscription instead (see /subscribe), not a per-booking cut.
 
     def _create_session():
         return stripe.checkout.Session.create(
@@ -1510,7 +1718,6 @@ async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
                 "quantity": 1,
             }],
             payment_intent_data={
-                "application_fee_amount": app_cut_cents,
                 "transfer_data": {"destination": owner_acct},
                 "setup_future_usage": "off_session",
             },
@@ -1608,6 +1815,119 @@ async def stripe_webhook(request: Request):
             job = await db.driver_jobs.find_one({"id": job_id}, {"_id": 0})
             if application and job:
                 await notify(application["driver_id"], "You were hired!", f"{job['poster_name']} hired you for {job['title']}. Reach out to coordinate next steps.", "driver_hired", {"job_id": job_id})
+                # Add the driver to the owner's roster — this is what starts
+                # the $2.99/mo recurring driver-seat billing (to the OWNER,
+                # not the driver). The driver's own app access is completely
+                # unaffected either way: they can browse/apply to jobs and
+                # rent trucks/trailers as a renter whether or not they're on
+                # anyone's roster.
+                existing = await db.roster.find_one({"owner_id": job["poster_id"], "driver_id": application["driver_id"], "status": "active"})
+                if not existing:
+                    await db.roster.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "owner_id": job["poster_id"],
+                        "driver_id": application["driver_id"],
+                        "driver_name": application.get("driver_name", ""),
+                        "source_job_id": job_id,
+                        "status": "active",
+                        "hired_at": now_iso(),
+                        "removed_at": None,
+                    })
+                    owner = await db.users.find_one({"id": job["poster_id"]}, {"_id": 0})
+                    if owner:
+                        settings = await get_settings()
+                        result = await ensure_driver_seat_subscription(owner, settings)
+                        if result and result.get("checkout_url"):
+                            await notify(
+                                owner["id"],
+                                "Set up driver-seat billing",
+                                "You hired a driver — add a payment method to start driver-seat billing ($2.99/mo per hired driver).",
+                                "driver_seat_billing_needed",
+                                {"checkout_url": result["checkout_url"]},
+                            )
+
+        # Owner truck-tier subscription (Starter/Growth/Enterprise) checkout completed.
+        purpose = (session.get("metadata") or {}).get("purpose")
+        owner_id = (session.get("metadata") or {}).get("owner_id")
+        if purpose == "subscription_tier" and owner_id:
+            tier_key = (session.get("metadata") or {}).get("tier")
+            sub_id = session.get("subscription")
+
+            def _get_sub():
+                return stripe.Subscription.retrieve(sub_id)
+
+            item_id = None
+            if sub_id:
+                try:
+                    sub = await run_in_threadpool(_get_sub)
+                    item_id = sub["items"]["data"][0]["id"]
+                except Exception as e:
+                    logger.error(f"could not retrieve subscription items: {e}")
+            await db.users.update_one(
+                {"id": owner_id},
+                {"$set": {
+                    "subscription_status": "active",
+                    "subscription_tier": tier_key,
+                    "subscription_id": sub_id,
+                    "subscription_item_id": item_id,
+                    "stripe_customer_id": session.get("customer"),
+                }},
+            )
+            owner = await db.users.find_one({"id": owner_id}, {"_id": 0})
+            # Unhide any listings that were hidden while the owner had no
+            # active subscription (e.g. a lapsed plan that's now renewed).
+            await db.listings.update_many({"owner_id": owner_id}, {"$set": {"hidden": False}})
+            if owner:
+                await sync_enterprise_truck_quantity(owner)
+                await notify(owner_id, "Subscription active", f"Your {tier_key} plan is now active.", "subscription_active", {})
+
+        if purpose == "driver_seats" and owner_id:
+            sub_id = session.get("subscription")
+
+            def _get_sub2():
+                return stripe.Subscription.retrieve(sub_id)
+
+            item_id = None
+            if sub_id:
+                try:
+                    sub = await run_in_threadpool(_get_sub2)
+                    item_id = sub["items"]["data"][0]["id"]
+                except Exception as e:
+                    logger.error(f"could not retrieve driver-seat subscription items: {e}")
+            await db.users.update_one(
+                {"id": owner_id},
+                {"$set": {
+                    "driver_subscription_id": sub_id,
+                    "driver_subscription_item_id": item_id,
+                    "stripe_customer_id": session.get("customer"),
+                }},
+            )
+
+    elif event["type"] == "customer.subscription.updated":
+        sub = event["data"]["object"]
+        sub_id = sub["id"]
+        status = sub.get("status")
+        owner = await db.users.find_one({"subscription_id": sub_id}, {"_id": 0})
+        if owner:
+            if status == "active":
+                await db.users.update_one({"id": owner["id"]}, {"$set": {"subscription_status": "active"}})
+                await db.listings.update_many({"owner_id": owner["id"]}, {"$set": {"hidden": False}})
+            elif status in ("past_due", "unpaid", "incomplete_expired", "canceled"):
+                await db.users.update_one({"id": owner["id"]}, {"$set": {"subscription_status": status}})
+                await db.listings.update_many({"owner_id": owner["id"]}, {"$set": {"hidden": True}})
+                await notify(owner["id"], "Subscription payment issue", "Your RigRent subscription payment failed or lapsed — your listings are hidden until it's resolved.", "subscription_lapsed", {})
+
+    elif event["type"] == "customer.subscription.deleted":
+        sub = event["data"]["object"]
+        sub_id = sub["id"]
+        owner = await db.users.find_one({"subscription_id": sub_id}, {"_id": 0})
+        if owner:
+            await db.users.update_one(
+                {"id": owner["id"]},
+                {"$set": {"subscription_status": "canceled", "subscription_tier": None, "subscription_item_id": None}},
+            )
+            await db.listings.update_many({"owner_id": owner["id"]}, {"$set": {"hidden": True}})
+            await notify(owner["id"], "Subscription cancelled", "Your RigRent subscription has ended — your listings are hidden until you subscribe again.", "subscription_cancelled", {})
 
     return {"received": True}
 
@@ -1633,6 +1953,152 @@ async def settings_set(data: SettingsIn, user: dict = Depends(require("admin")))
     if updates:
         await db.settings.update_one({"id": "global"}, {"$set": updates}, upsert=True)
     return await settings_get(user)
+
+
+# ====================================================== SUBSCRIPTIONS ========
+@api.get("/subscription/tiers")
+async def get_subscription_tiers():
+    """Public — shown to any owner picking a plan."""
+    s = await get_settings()
+    return {"tiers": s["subscription_tiers"], "driver_seat_price": s.get("driver_seat_price", DEFAULT_DRIVER_SEAT_PRICE)}
+
+
+@api.post("/admin/subscription-tiers/{tier_key}")
+async def set_subscription_tier(tier_key: str, data: SubscriptionTierIn, user: dict = Depends(require("admin"))):
+    s = await get_settings()
+    tiers = dict(s["subscription_tiers"])
+    if tier_key not in tiers:
+        raise HTTPException(status_code=404, detail="Unknown tier")
+    current = dict(tiers[tier_key])
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    current.update(updates)
+    tiers[tier_key] = current
+    await db.settings.update_one({"id": "global"}, {"$set": {"subscription_tiers": tiers}})
+    return {"tiers": tiers}
+
+
+@api.post("/admin/driver-seat-price")
+async def set_driver_seat_price(data: DriverSeatPriceIn, user: dict = Depends(require("admin"))):
+    """Changes the price for NEW driver-seat subscriptions going forward.
+    Existing active subscriptions keep whatever unit price they were created
+    with — Stripe subscription item quantity updates don't change price, so
+    this doesn't retroactively re-price owners who already have one running."""
+    await db.settings.update_one({"id": "global"}, {"$set": {"driver_seat_price": data.driver_seat_price}})
+    return {"driver_seat_price": data.driver_seat_price}
+
+
+@api.get("/subscription/status")
+async def subscription_status(user: dict = Depends(get_current_user)):
+    truck_count = await db.listings.count_documents({"owner_id": user["id"], "deleted_at": None})
+    roster_count = await active_roster_count(user["id"])
+    return {
+        "subscription_status": user.get("subscription_status", "none"),
+        "subscription_tier": user.get("subscription_tier"),
+        "truck_count": truck_count,
+        "roster_count": roster_count,
+        "driver_subscription_active": bool(user.get("driver_subscription_item_id")),
+    }
+
+
+@api.post("/subscribe")
+async def subscribe(data: SubscribeIn, user: dict = Depends(require("owner", "admin"))):
+    """Starts (or switches) an owner's truck-tier subscription.
+    Starter/Growth are flat monthly fees up to their truck_limit. Enterprise
+    has no cap and instead bills $/truck via a quantity-based subscription
+    item, whose quantity is kept in sync with the owner's live truck count
+    (see sync_enterprise_truck_quantity)."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments are not configured yet")
+    settings = await get_settings()
+    tiers = settings["subscription_tiers"]
+    tier = tiers.get(data.tier)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Unknown plan")
+
+    if data.tier == "enterprise":
+        truck_count = await db.listings.count_documents({"owner_id": user["id"], "deleted_at": None})
+        qty = max(truck_count, 1)
+        unit_amount = int(round(tier["price_per_truck"] * 100))
+        product_name = f"RigRent {tier['name']} plan ($/truck)"
+    else:
+        qty = 1
+        unit_amount = int(round(tier["price"] * 100))
+        product_name = f"RigRent {tier['name']} plan"
+
+    def _create_session():
+        kwargs = dict(
+            mode="subscription",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": product_name},
+                    "unit_amount": unit_amount,
+                    "recurring": {"interval": "month"},
+                },
+                "quantity": qty,
+            }],
+            success_url=f"{FRONTEND_URL}/profile?subscribed=1",
+            cancel_url=f"{FRONTEND_URL}/subscribe",
+            metadata={"purpose": "subscription_tier", "owner_id": user["id"], "tier": data.tier},
+        )
+        if user.get("stripe_customer_id"):
+            kwargs["customer"] = user["stripe_customer_id"]
+        return stripe.checkout.Session.create(**kwargs)
+
+    try:
+        session = await run_in_threadpool(_create_session)
+    except Exception as e:
+        logger.error(f"stripe subscription checkout failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not start checkout")
+    return {"checkout_url": session.url}
+
+
+@api.post("/subscription/cancel")
+async def cancel_subscription(user: dict = Depends(require("owner", "admin"))):
+    sub_id = user.get("subscription_id")
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="No active subscription")
+
+    def _cancel():
+        stripe.Subscription.delete(sub_id)
+
+    try:
+        await run_in_threadpool(_cancel)
+    except Exception as e:
+        logger.error(f"failed to cancel subscription: {e}")
+        raise HTTPException(status_code=502, detail="Could not cancel subscription")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"subscription_status": "canceled", "subscription_tier": None, "subscription_item_id": None}},
+    )
+    await db.listings.update_many({"owner_id": user["id"]}, {"$set": {"hidden": True}})
+    return {"ok": True}
+
+
+# ============================================================ ROSTER =========
+@api.get("/roster/mine")
+async def my_roster(user: dict = Depends(require("owner", "admin"))):
+    """Drivers currently hired onto this owner's roster — this is what the
+    $2.99/mo per-driver billing is based on. A driver being on/off a roster
+    never affects that driver's own ability to use RigRent."""
+    items = await db.roster.find({"owner_id": user["id"], "status": "active"}, {"_id": 0}).sort("hired_at", -1).to_list(500)
+    return items
+
+
+@api.post("/roster/{driver_id}/remove")
+async def remove_from_roster(driver_id: str, user: dict = Depends(require("owner", "admin"))):
+    """Removing a driver from the roster stops billing that $2.99/mo seat
+    (down to cancelling the whole driver-seat subscription if this was the
+    owner's last hired driver). The driver keeps full, unaffected use of
+    RigRent — this only changes the owner's roster and billing."""
+    entry = await db.roster.find_one({"owner_id": user["id"], "driver_id": driver_id, "status": "active"})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Driver not found on your roster")
+    await db.roster.update_one({"id": entry["id"]}, {"$set": {"status": "removed", "removed_at": now_iso()}})
+    await sync_driver_seat_quantity(user["id"])
+    await notify(driver_id, "Removed from roster", f"{user['name']} removed you from their active roster.", "roster_removed", {})
+    return {"ok": True}
 
 
 # ========================================================= NOTIFICATIONS ======
@@ -2269,6 +2735,12 @@ async def on_startup():
         await db.listings.create_index([("geo", "2dsphere")])
     except Exception as e:
         logger.error(f"geo index creation failed: {e}")
+    try:
+        await db.roster.create_index([("owner_id", 1), ("status", 1)])
+        await db.roster.create_index([("owner_id", 1), ("driver_id", 1), ("status", 1)])
+        await db.users.create_index([("subscription_id", 1)])
+    except Exception as e:
+        logger.error(f"roster/subscription index creation failed: {e}")
 
 
 @app.on_event("shutdown")
