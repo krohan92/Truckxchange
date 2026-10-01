@@ -139,9 +139,11 @@ export default function CreateListing() {
         },
       });
       router.back();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(e.message || ""); }
     finally { setBusy(false); }
   };
+
+  const needsSubscription = /subscription|plan allows/i.test(error);
 
   return (
     <View style={styles.container}>
@@ -248,6 +250,9 @@ export default function CreateListing() {
         </View>
 
         {error ? <Txt color={colors.error} size={type.sm}>{error}</Txt> : null}
+        {needsSubscription ? (
+          <Btn title="View Plans" icon="star-outline" variant="secondary" onPress={() => router.push("/subscribe")} testID="view-plans-btn" />
+        ) : null}
         <Btn title="Publish Listing" icon="check" onPress={submit} loading={busy} testID="publish-btn" />
       </KeyboardAwareScrollView>
     </View>
