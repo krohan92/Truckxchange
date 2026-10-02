@@ -6,6 +6,7 @@ import * as Location from "expo-location";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import DriverMap, { MapDriver } from "@/src/components/DriverMap";
 
 const CDL_FILTERS = ["All", "A", "B", "C"];
 
@@ -28,6 +29,7 @@ export default function BrowseDrivers() {
   const [nearMe, setNearMe] = useState(false);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locBusy, setLocBusy] = useState(false);
+  const [showMap, setShowMap] = useState(false);
 
   const load = useCallback(async (filter: string, loc: { latitude: number; longitude: number } | null) => {
     const params = new URLSearchParams();
@@ -65,7 +67,25 @@ export default function BrowseDrivers() {
           <Chip key={c} label={c === "All" ? "All CDL" : `Class ${c}`} active={cdlFilter === c} onPress={() => setCdlFilter(c)} testID={`cdl-filter-${c}`} />
         ))}
         <Chip label={locBusy ? "Locating…" : "Near Me"} active={nearMe} onPress={toggleNearMe} testID="near-me-toggle" />
+        {nearMe && coords ? <Chip label={showMap ? "List" : "Map"} active={showMap} onPress={() => setShowMap((v) => !v)} testID="map-toggle" /> : null}
       </View>
+      {nearMe && coords && showMap ? (
+        <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+          <DriverMap
+            center={coords}
+            drivers={items
+              .filter((i) => i.driver_profile?.last_location?.coordinates)
+              .map((i): MapDriver => ({
+                id: i.id,
+                name: i.name,
+                longitude: i.driver_profile.last_location.coordinates[0],
+                latitude: i.driver_profile.last_location.coordinates[1],
+                distance_mi: i.distance_mi,
+              }))}
+            onPressDriver={(id) => router.push(`/driver/${id}`)}
+          />
+        </View>
+      ) : null}
       {loading ? <Loader /> : (
         <FlatList
           data={items}
