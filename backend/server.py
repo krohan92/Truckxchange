@@ -1798,7 +1798,7 @@ async def stripe_status(user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"stripe status failed: {e}")
         return {"connected": True, "charges_enabled": False}
-    return {"connected": True, "charges_enabled": bool(acct.get("charges_enabled"))}
+    return {"connected": True, "charges_enabled": bool(acct["charges_enabled"])}
 
 
 @api.post("/bookings/{bid}/pay")
@@ -1870,14 +1870,19 @@ async def stripe_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
+        # Stripe objects (the SDK's `Account`/`Session`/etc. classes) stopped
+        # supporting dict-style `.get()` in newer stripe-python versions —
+        # only `[]` and attribute access work on them now. Converting to a
+        # plain dict immediately keeps every `.get(...)` call below working
+        # the way it always has, instead of rewriting each call site.
+        session = event["data"]["object"].to_dict()
         bid = (session.get("metadata") or {}).get("booking_id")
         if bid:
             pi_id = session.get("payment_intent")
 
             def _get_payment_method():
                 pi = stripe.PaymentIntent.retrieve(pi_id)
-                return pi.get("payment_method")
+                return pi.to_dict().get("payment_method")
 
             payment_method_id = None
             if pi_id:
@@ -2023,7 +2028,7 @@ async def stripe_webhook(request: Request):
             )
 
     elif event["type"] == "customer.subscription.updated":
-        sub = event["data"]["object"]
+        sub = event["data"]["object"].to_dict()
         sub_id = sub["id"]
         status = sub.get("status")
         owner = await db.users.find_one({"subscription_id": sub_id}, {"_id": 0})
@@ -2037,7 +2042,7 @@ async def stripe_webhook(request: Request):
                 await notify(owner["id"], "Subscription payment issue", "Your RigRent subscription payment failed or lapsed — your listings are hidden until it's resolved.", "subscription_lapsed", {})
 
     elif event["type"] == "customer.subscription.deleted":
-        sub = event["data"]["object"]
+        sub = event["data"]["object"].to_dict()
         sub_id = sub["id"]
         owner = await db.users.find_one({"subscription_id": sub_id}, {"_id": 0})
         if owner:
