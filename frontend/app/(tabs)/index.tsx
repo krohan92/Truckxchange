@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
   sortMenu: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
   sortOption: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
   card: { borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceSecondary, height: 240 },
-  cardImg: { ...StyleSheet.absoluteFillObject },
+  cardImg: { ...StyleSheet.absoluteFill },
   cardScrim: { position: "absolute", left: 0, right: 0, bottom: 0, height: "70%" },
   cardTopRow: { flexDirection: "row", justifyContent: "space-between", padding: spacing.md },
   favoriteBtn: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center" },
