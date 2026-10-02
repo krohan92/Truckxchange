@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { View, StyleSheet, Pressable, ScrollView, Linking } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
@@ -21,6 +21,11 @@ export default function Verify() {
   const [result, setResult] = useState<Record<DocType, any>>({ license: null, insurance: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState<any>(null);
+
+  useFocusEffect(useCallback(() => {
+    apiFetch<any>("/verify/status").then(setStatus).catch(() => {});
+  }, []));
 
   const pick = async (fromCamera: boolean) => {
     setError("");
@@ -99,6 +104,8 @@ export default function Verify() {
             : "Upload proof of active insurance. We read the provider, policy number and expiry to keep the marketplace safe."}
         </Txt>
 
+        {!r && status && renderStatusBanner(tab, status)}
+
         <View style={styles.frame}>
           {preview[tab] ? (
             <Image source={{ uri: preview[tab]! }} style={StyleSheet.absoluteFill} contentFit="cover" />
@@ -153,6 +160,33 @@ export default function Verify() {
         )}
       </ScrollView>
     </View>
+  );
+}
+
+const STATUS_META: Record<string, { label: string; tone: "success" | "error" | "warning" | "muted"; icon: string }> = {
+  not_submitted: { label: "Not submitted yet", tone: "muted", icon: "file-outline" },
+  verified: { label: "Verified", tone: "success", icon: "check-decagram" },
+  rejected: { label: "Rejected", tone: "error", icon: "close-circle" },
+  expired: { label: "Expired", tone: "error", icon: "calendar-remove" },
+  resubmission_requested: { label: "Resubmission requested", tone: "warning", icon: "reload-alert" },
+};
+
+function renderStatusBanner(tab: DocType, status: any) {
+  const key = tab === "license" ? "license_status" : "insurance_status";
+  const noteKey = tab === "license" ? "license_note" : "insurance_note";
+  const current = status[key] || "not_submitted";
+  const note = status[noteKey];
+  const meta = STATUS_META[current] || STATUS_META.not_submitted;
+  if (current === "not_submitted") return null;
+  return (
+    <Card style={{ gap: spacing.sm }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <Icon name={meta.icon} size={20} color={colors[meta.tone === "muted" ? "onSurfaceSecondary" : meta.tone]} />
+        <Txt weight="bold">Current status: </Txt>
+        <Badge label={meta.label} tone={meta.tone} />
+      </View>
+      {note ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>{note}</Txt> : null}
+    </Card>
   );
 }
 
