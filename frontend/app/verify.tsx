@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
   tabBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   tabActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
   frame: { height: 220, borderRadius: radius.lg, borderWidth: 2, borderColor: colors.borderStrong, borderStyle: "dashed", backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  scanOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center" },
+  scanOverlay: { ...StyleSheet.absoluteFill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center" },
   kv: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, alignItems: "center" },
   errorBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "rgba(239,68,68,0.1)", padding: spacing.md, borderRadius: radius.md },
 });
