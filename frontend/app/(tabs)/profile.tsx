@@ -133,7 +133,7 @@ export default function Profile() {
         <Display size={type.huge}>{user.name}</Display>
         <Txt color={colors.onSurfaceSecondary}>{user.email}</Txt>
         <Badge label={ROLE_LABEL[user.role]} tone="brand" />
-        {isRenter && user!.renter_rating_count > 0 ? (
+        {isRenter && (user.renter_rating_count ?? 0) > 0 ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
             <Icon name="star" size={14} color={colors.warning} />
             <Txt size={type.sm} color={colors.onSurfaceSecondary}>{user!.renter_rating!.toFixed(1)} renter rating · {user!.renter_rating_count} trip{user!.renter_rating_count === 1 ? "" : "s"}</Txt>
@@ -341,7 +341,11 @@ export default function Profile() {
             ) : (
               <>
                 <StatusRow label="Stripe payouts" ok={false} />
-                <Txt size={type.sm} color={colors.onSurfaceSecondary}>Connect a Stripe account so renters can pay you directly through the app.</Txt>
+                <Txt size={type.sm} color={colors.onSurfaceSecondary}>
+                  {isVendor
+                    ? "Connect a Stripe account so job posters can pay you directly through the app when they accept your bid."
+                    : "Connect a Stripe account so renters can pay you directly through the app."}
+                </Txt>
                 <Btn title={payoutStatus.connected ? "Finish Stripe Setup" : "Connect Payouts"} icon="bank" variant="secondary" onPress={connectPayouts} loading={connectBusy} testID="connect-payouts-btn" />
               </>
             )}
