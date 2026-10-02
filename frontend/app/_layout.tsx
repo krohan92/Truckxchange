@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { PushRegistrar } from "@/src/hooks/usePushRegistration";
+import { DriverLocationReporter } from "@/src/hooks/useDriverLocationReporting";
 import { colors } from "@/src/theme";
 import "@/src/i18n";
 import { initLanguage } from "@/src/i18n";
@@ -75,6 +76,7 @@ export default function RootLayout() {
         <KeyboardProvider>
           <AuthProvider>
             <PushRegistrar />
+            <DriverLocationReporter />
             <StatusBar style="dark" />
             <LanguagePickerModal visible={showLanguagePicker} onDone={() => setShowLanguagePicker(false)} />
             <ResponsiveShell>
