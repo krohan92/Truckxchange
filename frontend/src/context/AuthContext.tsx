@@ -10,6 +10,10 @@ export type User = {
   insurance_verified: boolean;
   license_info?: any;
   insurance_info?: any;
+  license_status?: "not_submitted" | "verified" | "rejected" | "expired" | "resubmission_requested";
+  insurance_status?: "not_submitted" | "verified" | "rejected" | "expired" | "resubmission_requested";
+  license_note?: string | null;
+  insurance_note?: string | null;
   favorite_listing_ids?: string[];
   renter_rating?: number;
   renter_rating_count?: number;
@@ -24,6 +28,8 @@ export type User = {
     home_state?: string;
     phone_number?: string;
     resume_path?: string;
+    last_location?: { type: "Point"; coordinates: [number, number] };
+    last_location_at?: string;
   };
   subscription_status?: "none" | "active" | "past_due" | "unpaid" | "incomplete_expired" | "canceled";
   subscription_tier?: "starter" | "growth" | "enterprise" | null;
