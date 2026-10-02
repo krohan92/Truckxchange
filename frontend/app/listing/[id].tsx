@@ -54,6 +54,9 @@ export default function ListingDetail() {
   const [imgIdx, setImgIdx] = useState(0);
   const [confirmed, setConfirmed] = useState<any>(null);
   const [reviews, setReviews] = useState<any[]>([]);
+  const [history, setHistory] = useState<any>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const [miles, setMiles] = useState("250");
   const [startDateObj, setStartDateObj] = useState<Date | null>(null);
@@ -95,6 +98,18 @@ export default function ListingDetail() {
     const d = new Date(listing.insurance_expiry);
     return isFinite(d.getTime()) ? d < new Date() : null;
   })();
+
+  const toggleHistory = async () => {
+    if (historyOpen) { setHistoryOpen(false); return; }
+    setHistoryOpen(true);
+    if (history) return;
+    setHistoryBusy(true);
+    try {
+      const data = await apiFetch<any>(`/listings/${id}/history`);
+      setHistory(data);
+    } catch {}
+    finally { setHistoryBusy(false); }
+  };
 
   const book = async () => {
     if (needsVerify) {
@@ -299,6 +314,44 @@ export default function ListingDetail() {
             </>
           )}
 
+          <View style={{ gap: spacing.md, marginTop: spacing.md }}>
+            <Pressable onPress={toggleHistory} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }} testID="toggle-history-btn">
+              <Display size={type.xl}>VEHICLE HISTORY</Display>
+              <Icon name={historyOpen ? "chevron-up" : "chevron-down"} size={22} color={colors.onSurfaceSecondary} />
+            </Pressable>
+            {historyOpen ? (
+              historyBusy ? (
+                <Loader />
+              ) : history ? (
+                <>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+                    <Badge label={`${history.summary.completed_trips} completed trip${history.summary.completed_trips === 1 ? "" : "s"}`} tone="brand" />
+                    {history.summary.vin_verified ? <Badge label="VIN verified" tone="success" /> : null}
+                    {history.summary.disputes_resolved > 0 ? <Badge label={`${history.summary.disputes_resolved} dispute${history.summary.disputes_resolved === 1 ? "" : "s"} resolved`} tone="muted" /> : null}
+                  </View>
+                  {history.events.length === 0 ? (
+                    <Txt size={type.sm} color={colors.onSurfaceSecondary}>No activity yet — this rig was just listed.</Txt>
+                  ) : (
+                    history.events.slice().reverse().map((ev: any, i: number) => (
+                      <Card key={i} style={{ gap: 4 }}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                          <Txt weight="bold">{historyEventLabel(ev)}</Txt>
+                          {ev.at ? <Txt size={type.sm} color={colors.onSurfaceSecondary}>{new Date(ev.at).toLocaleDateString()}</Txt> : null}
+                        </View>
+                        {ev.type === "booking" && ev.miles_driven != null ? (
+                          <Txt size={type.sm} color={colors.onSurfaceSecondary}>{ev.miles_driven.toLocaleString()} miles driven{ev.renter_name ? ` · ${ev.renter_name}` : ""}</Txt>
+                        ) : null}
+                        {ev.type === "dispute" && ev.resolution ? (
+                          <Txt size={type.sm} color={colors.onSurfaceSecondary}>{ev.resolution}</Txt>
+                        ) : null}
+                      </Card>
+                    ))
+                  )}
+                </>
+              ) : null
+            ) : null}
+          </View>
+
           {reviews.length > 0 ? (
             <View style={{ gap: spacing.md, marginTop: spacing.md }}>
               <Display size={type.xl}>REVIEWS</Display>
@@ -372,6 +425,17 @@ function SplitRow({ label, value, tone }: { label: string; value: string; tone?:
       <Display size={type.lg} color={c}>{value}</Display>
     </View>
   );
+}
+
+function historyEventLabel(ev: any): string {
+  switch (ev.type) {
+    case "listed": return "Listed on RigRent";
+    case "vin_verified": return "VIN decoded & verified";
+    case "booking": return ev.status === "completed" ? "Trip completed" : ev.status === "cancelled" ? "Trip cancelled" : "Trip active";
+    case "inspection": return ev.phase === "before" ? "Pickup inspection" : "Return inspection";
+    case "dispute": return ev.status === "resolved" ? "Dispute resolved" : "Dispute opened";
+    default: return "Event";
+  }
 }
 
 const styles = StyleSheet.create({
