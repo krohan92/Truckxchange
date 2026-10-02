@@ -200,6 +200,11 @@ class DriverProfileIn(BaseModel):
     resume_path: Optional[str] = ""
 
 
+class DriverLocationIn(BaseModel):
+    latitude: float
+    longitude: float
+
+
 class DriverJobIn(BaseModel):
     title: str
     description: Optional[str] = ""
@@ -248,7 +253,8 @@ class DriverSeatPriceIn(BaseModel):
 
 
 class ReviewIn(BaseModel):
-    approved: bool
+    approved: bool  # kept for backward compatibility — True maps to decision="approve", False to "reject"
+    decision: Optional[Literal["approve", "reject", "request_resubmission"]] = None
     note: Optional[str] = ""
 
 
@@ -362,6 +368,14 @@ def public_user(u: dict) -> dict:
         "insurance_verified": u.get("insurance_verified", False),
         "license_info": u.get("license_info"),
         "insurance_info": u.get("insurance_info"),
+        # Granular status beyond the plain booleans above (kept for backward
+        # compatibility — e.g. the booking gate still just checks the bool).
+        # "not_submitted" | "pending_review" | "verified" | "rejected" |
+        # "expired" | "resubmission_requested".
+        "license_status": u.get("license_status", "verified" if u.get("license_verified") else "not_submitted"),
+        "insurance_status": u.get("insurance_status", "verified" if u.get("insurance_verified") else "not_submitted"),
+        "license_note": u.get("license_note"),
+        "insurance_note": u.get("insurance_note"),
         "favorite_listing_ids": u.get("favorite_listing_ids", []),
         "renter_rating": u.get("renter_rating", 0),
         "renter_rating_count": u.get("renter_rating_count", 0),
@@ -383,6 +397,20 @@ async def get_current_user(cred: Optional[HTTPAuthorizationCredentials] = Depend
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+async def get_optional_user(cred: Optional[HTTPAuthorizationCredentials] = Depends(bearer)) -> Optional[dict]:
+    """Like get_current_user, but never raises — for endpoints (like a
+    listing's vehicle history) that are public but show more detail to the
+    owner/admin than to an anonymous or renter viewer."""
+    if cred is None:
+        return None
+    try:
+        payload = jwt.decode(cred.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
+        uid = payload["sub"]
+    except Exception:
+        return None
+    return await db.users.find_one({"id": uid, "active": True}, {"_id": 0})
 
 
 def require(*roles: str):
@@ -734,6 +762,10 @@ async def register(data: RegisterIn):
         "insurance_verified": False,
         "license_info": None,
         "insurance_info": None,
+        "license_status": "not_submitted",
+        "insurance_status": "not_submitted",
+        "license_note": None,
+        "insurance_note": None,
         "created_at": now_iso(),
     }
     await db.users.insert_one(dict(user))
@@ -799,15 +831,19 @@ async def verify_document(data: VerifyIn, user: dict = Depends(get_current_user)
     await db.verifications.insert_one(dict(record))
 
     info = {**extracted, "expired": expired, "status": status}
+    note = None if passed else (
+        "This document appears to be expired." if expired else
+        "We couldn't clearly read this document — please retake a clear, well-lit photo."
+    )
     if data.doc_type == "license":
         await db.users.update_one(
             {"id": user["id"]},
-            {"$set": {"license_verified": passed, "license_info": info}},
+            {"$set": {"license_verified": passed, "license_info": info, "license_status": status, "license_note": note}},
         )
     else:
         await db.users.update_one(
             {"id": user["id"]},
-            {"$set": {"insurance_verified": passed, "insurance_info": info}},
+            {"$set": {"insurance_verified": passed, "insurance_info": info, "insurance_status": status, "insurance_note": note}},
         )
 
     return {
@@ -826,6 +862,10 @@ async def verify_status(user: dict = Depends(get_current_user)):
         "insurance_verified": fresh.get("insurance_verified", False),
         "license_info": fresh.get("license_info"),
         "insurance_info": fresh.get("insurance_info"),
+        "license_status": fresh.get("license_status", "verified" if fresh.get("license_verified") else "not_submitted"),
+        "insurance_status": fresh.get("insurance_status", "verified" if fresh.get("insurance_verified") else "not_submitted"),
+        "license_note": fresh.get("license_note"),
+        "insurance_note": fresh.get("insurance_note"),
     }
 
 
@@ -1056,6 +1096,85 @@ async def get_listing(lid: str):
     if not item:
         raise HTTPException(status_code=404, detail="Listing not found")
     return item
+
+
+@api.get("/listings/{lid}/history")
+async def listing_history(lid: str, user: Optional[dict] = Depends(get_optional_user)):
+    """A per-truck/trailer timeline assembled from data that already exists
+    elsewhere (bookings, inspections, disputes, the VIN-decode snapshot) —
+    nothing new is entered by hand. The owner/admin sees the full picture
+    (who rented it, dispute reasons/resolutions, odometer readings); anyone
+    else gets a trimmed, no-names version so a renter can see a rig has a
+    clean trip history before booking without exposing other renters' info."""
+    listing = await db.listings.find_one({"id": lid}, {"_id": 0})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    is_privileged = bool(user) and (user["role"] == "admin" or user["id"] == listing["owner_id"])
+
+    bookings = await db.bookings.find(
+        {"listing_id": lid, "status": {"$in": ["completed", "active", "cancelled"]}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+
+    events = [{"type": "listed", "at": listing["created_at"]}]
+    if listing.get("vin_decoded"):
+        events.append({"type": "vin_verified", "at": listing["created_at"], "vin_decoded": listing["vin_decoded"]})
+
+    completed_trips = 0
+    total_miles_driven = 0
+    disputes_resolved = 0
+    for b in bookings:
+        if b["status"] == "completed":
+            completed_trips += 1
+        event = {
+            "type": "booking",
+            "booking_id": b["id"],
+            "status": b["status"],
+            "start_date": b.get("start_date"),
+            "end_date": b.get("end_date"),
+            "at": b["created_at"],
+        }
+        if is_privileged:
+            event["renter_name"] = b.get("renter_name")
+            event["subtotal"] = b.get("subtotal")
+        if b.get("miles_driven") is not None:
+            event["miles_driven"] = b["miles_driven"]
+            total_miles_driven += b["miles_driven"]
+        events.append(event)
+
+        for insp in b.get("inspections", []):
+            insp_event = {"type": "inspection", "booking_id": b["id"], "phase": insp["phase"], "at": insp["at"]}
+            if insp.get("odometer") is not None:
+                insp_event["odometer"] = insp["odometer"]
+            if is_privileged:
+                insp_event["fuel_level"] = insp.get("fuel_level")
+                insp_event["video_path"] = insp.get("video_path")
+            events.append(insp_event)
+
+        if b.get("dispute_status") in ("open", "resolved"):
+            disp_event = {"type": "dispute", "booking_id": b["id"], "status": b["dispute_status"], "at": b.get("dispute_opened_at")}
+            if is_privileged:
+                disp_event["reason"] = b.get("dispute_reason")
+                disp_event["resolution"] = b.get("dispute_resolution")
+                disp_event["resolved_amount"] = b.get("dispute_resolved_amount")
+            events.append(disp_event)
+            if b["dispute_status"] == "resolved":
+                disputes_resolved += 1
+
+    events.sort(key=lambda e: e.get("at") or "")
+
+    summary = {
+        "completed_trips": completed_trips,
+        "total_miles_driven": total_miles_driven,
+        "disputes_resolved": disputes_resolved,
+        "vin_verified": bool(listing.get("vin_decoded")),
+    }
+    if is_privileged:
+        summary["insurance_expiry"] = listing.get("insurance_expiry")
+        summary["insurance_expired"] = compute_expired(listing.get("insurance_expiry"))
+        summary["dot_number"] = listing.get("dot_number")
+        summary["mileage"] = listing.get("mileage")
+
+    return {"summary": summary, "events": events}
 
 
 @api.delete("/listings/{lid}")
@@ -2459,22 +2578,80 @@ async def accept_bid(rid: str, data: AcceptBidIn, user: dict = Depends(get_curre
 # same shape as the roadside requests/bids system above (poster + applicants).
 @api.post("/driver-profile")
 async def update_driver_profile(data: DriverProfileIn, user: dict = Depends(require("renter", "admin"))):
-    await db.users.update_one({"id": user["id"]}, {"$set": {"driver_profile": data.dict()}})
-    return {"ok": True, "driver_profile": data.dict()}
+    # Merge rather than overwrite — a profile edit shouldn't wipe out
+    # last_location/last_location_at, which are written separately by the
+    # live GPS reporting endpoint below.
+    existing = (user.get("driver_profile") or {})
+    merged = {**data.dict(), "last_location": existing.get("last_location"), "last_location_at": existing.get("last_location_at")}
+    await db.users.update_one({"id": user["id"]}, {"$set": {"driver_profile": merged}})
+    return {"ok": True, "driver_profile": merged}
+
+
+@api.post("/driver-profile/location")
+async def report_driver_location(data: DriverLocationIn, user: dict = Depends(require("renter", "admin"))):
+    """Live GPS ping from a driver's app, sent periodically while the app is
+    open (foreground only — not a background task). Stored in MongoDB with a
+    2dsphere index, same geospatial approach already used for listings'
+    "near me" search and vendor service areas — no Google Maps/Places and no
+    separate location-store service (Redis) needed. A driver only shows up
+    to owners browsing /drivers if they're also open_to_work; this endpoint
+    itself doesn't gate on that, so toggling it off still just hides them
+    from search rather than silently going stale."""
+    if not user.get("driver_profile"):
+        raise HTTPException(status_code=400, detail="Set up your driver profile first")
+    point = {"type": "Point", "coordinates": [data.longitude, data.latitude]}
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"driver_profile.last_location": point, "driver_profile.last_location_at": now_iso()}},
+    )
+    return {"ok": True}
 
 
 @api.get("/drivers")
-async def list_drivers(cdl_class: Optional[str] = None, user: dict = Depends(require("owner", "admin"))):
+async def list_drivers(
+    cdl_class: Optional[str] = None,
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    radius_mi: Optional[float] = None,
+    user: dict = Depends(require("owner", "admin")),
+):
     """Owners browse truckers who've opted in to being found for hire.
     Phone numbers are intentionally left out of the list view — shown only
     on an individual driver's profile page, where there's clear intent to
-    actually reach out, not on a casual scroll."""
+    actually reach out, not on a casual scroll. Each driver's last_location
+    (if they've had the app open recently) is included so an owner can see
+    roughly where available drivers currently are, and lat/lng sorts by
+    real distance via the same MongoDB geospatial approach used for
+    listings' "near me" search."""
     query = {"role": "renter", "driver_profile.open_to_work": True}
     if cdl_class:
         query["driver_profile.cdl_class"] = cdl_class
-    items = await db.users.find(
-        query, {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1}
-    ).to_list(200)
+
+    if lat is not None and lng is not None:
+        geo_query = dict(query)
+        geo_query["driver_profile.last_location"] = {"$exists": True}
+        pipeline = [
+            {
+                "$geoNear": {
+                    "near": {"type": "Point", "coordinates": [lng, lat]},
+                    "distanceField": "distance_meters",
+                    "spherical": True,
+                    "key": "driver_profile.last_location",
+                    "query": geo_query,
+                    **({"maxDistance": radius_mi * 1609.34} if radius_mi else {}),
+                }
+            },
+            {"$project": {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1, "distance_meters": 1}},
+            {"$limit": 200},
+        ]
+        items = await db.users.aggregate(pipeline).to_list(200)
+        for item in items:
+            item["distance_mi"] = round(item.pop("distance_meters", 0) / 1609.34, 1)
+    else:
+        items = await db.users.find(
+            query, {"_id": 0, "id": 1, "name": 1, "driver_profile": 1, "renter_rating": 1, "renter_rating_count": 1, "license_verified": 1}
+        ).to_list(200)
+
     for item in items:
         if item.get("driver_profile"):
             item["driver_profile"].pop("phone_number", None)
@@ -2615,7 +2792,7 @@ async def admin_reseed_listings(user: dict = Depends(require("admin"))):
 
 @api.get("/admin/verifications")
 async def admin_verifications(user: dict = Depends(require("admin"))):
-    items = await db.verifications.find({}, {"_id": 0, "extracted": 1, "id": 1, "user_id": 1, "doc_type": 1, "status": 1, "expired": 1, "storage_path": 1, "admin_reviewed": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
+    items = await db.verifications.find({}, {"_id": 0, "extracted": 1, "id": 1, "user_id": 1, "doc_type": 1, "status": 1, "expired": 1, "storage_path": 1, "admin_reviewed": 1, "admin_note": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
     return items
 
 
@@ -2624,10 +2801,24 @@ async def review_verification(vid: str, data: ReviewIn, user: dict = Depends(req
     rec = await db.verifications.find_one({"id": vid})
     if not rec:
         raise HTTPException(status_code=404, detail="Not found")
-    new_status = "verified" if data.approved else "rejected"
+    decision = data.decision or ("approve" if data.approved else "reject")
+    new_status = {"approve": "verified", "reject": "rejected", "request_resubmission": "resubmission_requested"}[decision]
+    passed = decision == "approve"
     await db.verifications.update_one({"id": vid}, {"$set": {"status": new_status, "admin_reviewed": True, "admin_note": data.note}})
-    field = "license_verified" if rec["doc_type"] == "license" else "insurance_verified"
-    await db.users.update_one({"id": rec["user_id"]}, {"$set": {field: data.approved}})
+    bool_field = "license_verified" if rec["doc_type"] == "license" else "insurance_verified"
+    status_field = "license_status" if rec["doc_type"] == "license" else "insurance_status"
+    note_field = "license_note" if rec["doc_type"] == "license" else "insurance_note"
+    await db.users.update_one(
+        {"id": rec["user_id"]},
+        {"$set": {bool_field: passed, status_field: new_status, note_field: data.note or None}},
+    )
+    await notify(
+        rec["user_id"],
+        "Verification update" if passed else ("Resubmission requested" if decision == "request_resubmission" else "Verification rejected"),
+        data.note or (f"Your {rec['doc_type']} is now verified." if passed else f"Your {rec['doc_type']} needs attention."),
+        "verification_update",
+        {"verification_id": vid, "status": new_status},
+    )
     return {"ok": True, "status": new_status}
 
 
@@ -2651,6 +2842,10 @@ async def seed():
             "insurance_verified": role in ("owner", "vendor"),
             "license_info": None,
             "insurance_info": None,
+            "license_status": "verified" if role in ("owner", "vendor") else "not_submitted",
+            "insurance_status": "verified" if role in ("owner", "vendor") else "not_submitted",
+            "license_note": None,
+            "insurance_note": None,
             "created_at": now_iso(),
         }
         await db.users.insert_one(dict(doc))
@@ -2741,6 +2936,10 @@ async def on_startup():
         await db.users.create_index([("subscription_id", 1)])
     except Exception as e:
         logger.error(f"roster/subscription index creation failed: {e}")
+    try:
+        await db.users.create_index([("driver_profile.last_location", "2dsphere")])
+    except Exception as e:
+        logger.error(f"driver location index creation failed: {e}")
 
 
 @app.on_event("shutdown")
