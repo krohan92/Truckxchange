@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { setLanguage, SupportedLanguage } from "@/src/i18n";
 import { Txt, Display, Icon, Card, Badge, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { PRIVACY_POLICY_URL } from "@/src/legal";
 
 const ROLE_LABEL: any = { renter: "Trucker", owner: "Fleet Owner", vendor: "Service Company", admin: "Administrator" };
 
@@ -22,6 +23,10 @@ export default function Profile() {
   const [payoutStatus, setPayoutStatus] = useState<{ connected: boolean; charges_enabled: boolean }>({ connected: false, charges_enabled: false });
   const [connectBusy, setConnectBusy] = useState(false);
   const [reseedBusy, setReseedBusy] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delPassword, setDelPassword] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delError, setDelError] = useState("");
   const [serviceRadius, setServiceRadius] = useState("50");
   const [serviceAreaBusy, setServiceAreaBusy] = useState(false);
   const [serviceAreaSaved, setServiceAreaSaved] = useState(false);
@@ -242,7 +247,7 @@ export default function Profile() {
 
             <Btn title="Review Verifications" icon="clipboard-check" variant="secondary" onPress={() => router.push("/admin")} testID="admin-review-btn" />
             <Btn title="Review Disputes" icon="scale-balance" variant="secondary" onPress={() => router.push("/admin-disputes")} testID="admin-disputes-btn" />
-            <Btn
+            {__DEV__ ? <Btn
               title={reseedBusy ? "Reseeding…" : "Reseed Demo Listings"}
               icon="refresh"
               variant="ghost"
@@ -255,7 +260,7 @@ export default function Profile() {
                 finally { setReseedBusy(false); }
               }}
               testID="reseed-listings-btn"
-            />
+            /> : null}
           </Card>
         )}
 
@@ -369,6 +374,49 @@ export default function Profile() {
             ))}
           </View>
         </Card>
+
+        <Btn title="Privacy Policy" icon="shield-lock" variant="ghost" onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => {})} testID="privacy-btn" />
+
+        {user.role !== "admin" && (
+          <Card style={{ gap: spacing.md }}>
+            <Display size={type.lg}>DELETE ACCOUNT</Display>
+            {!delOpen ? (
+              <>
+                <Txt color={colors.onSurfaceSecondary} size={type.sm}>
+                  Permanently delete your account and personal data. This cannot be undone.
+                </Txt>
+                <Btn title="Delete My Account" icon="delete" variant="danger" onPress={() => { setDelOpen(true); setDelError(""); }} testID="delete-account-btn" />
+              </>
+            ) : (
+              <>
+                <Txt color={colors.onSurfaceSecondary} size={type.sm}>
+                  This cancels your active subscriptions, closes your listings, requests and applications, and erases your profile, documents and uploaded files. Past bookings, payments, reviews and messages are kept but shown as "Deleted user". You cannot delete while you have an approved or active booking or an open dispute. Enter your password to confirm.
+                </Txt>
+                <Field label="Password" value={delPassword} onChangeText={setDelPassword} secureTextEntry testID="delete-password" />
+                {delError ? <Txt color={colors.error} size={type.sm}>{delError}</Txt> : null}
+                <Btn
+                  title="Permanently Delete"
+                  icon="delete-forever"
+                  variant="danger"
+                  loading={delBusy}
+                  testID="delete-confirm-btn"
+                  onPress={async () => {
+                    if (!delPassword) { setDelError("Enter your password."); return; }
+                    setDelBusy(true); setDelError("");
+                    try {
+                      await apiFetch("/account/delete", { method: "POST", body: { password: delPassword } });
+                      await logout();
+                      router.replace("/auth");
+                    } catch (e: any) {
+                      setDelError(e?.message || "Could not delete account");
+                    } finally { setDelBusy(false); }
+                  }}
+                />
+                <Btn title="Cancel" variant="ghost" onPress={() => { setDelOpen(false); setDelPassword(""); setDelError(""); }} testID="delete-cancel-btn" />
+              </>
+            )}
+          </Card>
+        )}
 
         <Btn title="Log Out" icon="logout" variant="ghost" onPress={async () => { await logout(); router.replace("/auth"); }} testID="logout-btn" />
       </View>
