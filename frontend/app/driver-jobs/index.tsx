@@ -6,6 +6,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Btn } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const STATUS_TONE: any = { open: "warning", filled: "success" };
 
@@ -27,7 +28,7 @@ export default function DriverJobs() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <View>
           <Txt size={type.sm} color={colors.onSurfaceSecondary}>{isOwner ? "Your postings" : "Find work"}</Txt>
           <Display size={type.xl}>DRIVING JOBS</Display>

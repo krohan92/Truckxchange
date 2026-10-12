@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, fileUrl } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, EmptyState } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const TONE: any = { verified: "success", rejected: "error", expired: "error" };
 
@@ -30,7 +31,7 @@ export default function Admin() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>VERIFICATIONS</Display>
         <View style={{ width: 40 }} />
       </View>

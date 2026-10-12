@@ -8,6 +8,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 export default function DriverJobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -62,7 +63,7 @@ export default function DriverJobDetail() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>JOB</Display>
         <Pressable testID="message-btn" onPress={() => router.push(`/messages/job/${id}`)} style={styles.iconBtn}>
           <Icon name="message-outline" size={22} color={colors.onSurface} />

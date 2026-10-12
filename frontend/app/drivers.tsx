@@ -7,6 +7,7 @@ import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState, Badge, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 import DriverMap, { MapDriver } from "@/src/components/DriverMap";
+import { goBack } from "@/src/nav";
 
 const CDL_FILTERS = ["All", "A", "B", "C"];
 
@@ -58,7 +59,7 @@ export default function BrowseDrivers() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>FIND DRIVERS</Display>
         <View style={{ width: 40 }} />
       </View>

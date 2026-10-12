@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch, uploadFile, fileUrl } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const TRUCK_CATS = ["Sleeper", "Day Cab", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Tow Truck", "Cab & Chassis"];
 const TRAILER_CATS = ["Flatbed", "Reefer", "Dry Van", "Lowboy"];
@@ -138,7 +139,7 @@ export default function CreateListing() {
           insurance_provider: insProvider, insurance_policy: insPolicy, insurance_expiry: insExpiry,
         },
       });
-      router.back();
+      goBack(router);
     } catch (e: any) { setError(e.message || ""); }
     finally { setBusy(false); }
   };
@@ -148,7 +149,7 @@ export default function CreateListing() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>LIST A RIG</Display>
         <View style={{ width: 40 }} />
       </View>

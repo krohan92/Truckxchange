@@ -7,6 +7,7 @@ import { apiFetch, uploadFile } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
 
@@ -183,7 +184,7 @@ export default function BookingDetail() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>BOOKING</Display>
         <View style={{ width: 40 }} />
       </View>

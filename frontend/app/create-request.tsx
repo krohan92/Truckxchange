@@ -7,6 +7,7 @@ import * as Location from "expo-location";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const CATS = [
   { key: "tow", label: "Tow", icon: "tow-truck" },
@@ -52,7 +53,7 @@ export default function CreateRequest() {
         method: "POST",
         body: { title, category, location, description, latitude: coords?.latitude ?? null, longitude: coords?.longitude ?? null },
       });
-      router.back();
+      goBack(router);
     } catch (e: any) { setError(e.message); }
     finally { setBusy(false); }
   };
@@ -60,7 +61,7 @@ export default function CreateRequest() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>POST REQUEST</Display>
         <View style={{ width: 40 }} />
       </View>

@@ -7,6 +7,7 @@ import * as Location from "expo-location";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Field, Btn, Icon, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const JOB_TYPES = ["Full-time", "Part-time", "Local", "Regional", "OTR"];
 const CDL_CLASSES = ["A", "B", "C", "None"];
@@ -56,7 +57,7 @@ export default function CreateDriverJob() {
           latitude: coords?.latitude ?? null, longitude: coords?.longitude ?? null,
         },
       });
-      router.back();
+      goBack(router);
     } catch (e: any) { setError(e.message); }
     finally { setBusy(false); }
   };
@@ -64,7 +65,7 @@ export default function CreateDriverJob() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>POST A JOB</Display>
         <View style={{ width: 40 }} />
       </View>

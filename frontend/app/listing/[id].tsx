@@ -11,6 +11,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Field, Btn, Icon, Loader, Badge, Card, Chip } from "@/src/ui";
 import DatePickerField from "@/src/components/DatePickerField";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function formatDateForApi(d: Date): string {
@@ -165,11 +166,11 @@ export default function ListingDetail() {
             ))}
           </ScrollView>
           <LinearGradient colors={[colors.scrim, "transparent", colors.surface]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          <Pressable testID="back-btn" onPress={() => router.back()} style={[styles.backBtn, { top: insets.top + spacing.sm }]}>
+          <Pressable testID="back-btn" onPress={() => goBack(router)} style={[styles.backBtn, { top: insets.top + spacing.sm }]}>
             <Icon name="chevron-left" size={26} color={colors.onScrim} />
           </Pressable>
           {user ? (
-            <Pressable testID="favorite-btn" onPress={toggleFavorite} disabled={favBusy} style={[styles.backBtn, { top: insets.top + spacing.sm, right: spacing.lg, left: undefined }]}>
+            <Pressable testID="favorite-btn" onPress={toggleFavorite} disabled={favBusy} style={[styles.favBtn, { top: insets.top + spacing.sm }]}>
               <Icon name={isFavorite ? "heart" : "heart-outline"} size={22} color={isFavorite ? colors.error : colors.onScrim} />
             </Pressable>
           ) : null}
@@ -442,6 +443,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.surface },
   hero: { height: 300 },
   backBtn: { position: "absolute", left: spacing.lg, width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
+  favBtn: { position: "absolute", right: spacing.lg, width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.scrim, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
   dots: { position: "absolute", bottom: spacing.xxl, alignSelf: "center", flexDirection: "row", gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" },
   dotActive: { backgroundColor: colors.brand, width: 18 },

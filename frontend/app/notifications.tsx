@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiFetch } from "@/src/api/client";
 import { Txt, Display, Icon, Loader, EmptyState } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const ICONS: Record<string, string> = {
   booking_requested: "calendar-clock",
@@ -60,7 +61,7 @@ export default function Notifications() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>ALERTS</Display>
         <Pressable testID="mark-all-btn" onPress={markAll} hitSlop={8}><Txt size={type.sm} color={colors.brand} weight="bold">Mark all</Txt></Pressable>
       </View>

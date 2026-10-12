@@ -8,6 +8,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 const CAT_ICON: any = { tow: "tow-truck", repair: "wrench", maintenance: "oil" };
 
@@ -68,7 +69,7 @@ export default function RequestDetail() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}><Icon name="chevron-left" size={26} color={colors.onSurface} /></Pressable>
         <Display size={type.xl}>REQUEST</Display>
         <View style={{ width: 40 }} />
       </View>

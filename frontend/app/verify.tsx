@@ -9,6 +9,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Btn, Icon, Card, Badge } from "@/src/ui";
 import { colors, spacing, radius, fonts, type } from "@/src/theme";
+import { goBack } from "@/src/nav";
 
 type DocType = "license" | "insurance";
 
@@ -79,7 +80,7 @@ export default function Verify() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="back-btn" onPress={() => goBack(router)} style={styles.iconBtn}>
           <Icon name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
         <Display size={type.xl}>VERIFICATION</Display>
@@ -156,7 +157,7 @@ export default function Verify() {
         </View>
 
         {r?.passed && (
-          <Btn title="Done" icon="arrow-right" onPress={() => router.back()} testID="done-btn" />
+          <Btn title="Done" icon="arrow-right" onPress={() => goBack(router)} testID="done-btn" />
         )}
       </ScrollView>
     </View>
