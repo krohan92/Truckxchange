@@ -18,7 +18,7 @@ export function DriverLocationReporter() {
   const { user } = useAuth();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const isDriver = !!user && user.role === "renter" && !!user.driver_profile;
+  const isDriver = !!user && user.role === "renter" && !!user.driver_profile && user.driver_profile.open_to_work !== false;
 
   useEffect(() => {
     if (!isDriver) return;
