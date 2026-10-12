@@ -1202,6 +1202,8 @@ async def create_booking(data: BookingIn, user: dict = Depends(get_current_user)
     listing = await db.listings.find_one({"id": data.listing_id, "deleted_at": None}, {"_id": 0})
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.get("sample"):
+        raise HTTPException(status_code=400, detail="This is a sample listing and cannot be booked")
 
     # Prevent double-booking: reject if this listing already has a
     # pending/approved/active booking whose dates overlap the requested range.
@@ -3074,10 +3076,72 @@ async def retire_demo_accounts():
             logger.warning(f"disabled demo account {email}")
 
 
+SAMPLE_OWNER_EMAIL = "sample-fleet@rigrent.invalid"
+
+
+def sample_listings_enabled() -> bool:
+    return os.environ.get("SEED_SAMPLE_LISTINGS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+async def seed_sample_listings():
+    """A few clearly-labelled sample listings so the marketplace is not empty
+    (e.g. for App Store review). They belong to a non-loginable sample owner
+    and cannot be booked (see create_booking)."""
+    import secrets
+    owner = await db.users.find_one({"email": SAMPLE_OWNER_EMAIL})
+    if not owner:
+        owner = {
+            "id": str(uuid.uuid4()),
+            "name": "RigRent Sample Fleet",
+            "email": SAMPLE_OWNER_EMAIL,
+            "password_hash": pwd_context.hash(secrets.token_urlsafe(32)),
+            "role": "owner",
+            "active": True,
+            "license_verified": True,
+            "insurance_verified": True,
+            "license_info": None,
+            "insurance_info": None,
+            "license_status": "verified",
+            "insurance_status": "verified",
+            "license_note": None,
+            "insurance_note": None,
+            "created_at": now_iso(),
+        }
+        await db.users.insert_one(dict(owner))
+    if await db.listings.count_documents({"sample": True, "deleted_at": None}) > 0:
+        return
+    samples = [
+        ("Sample: Freightliner Cascadia Sleeper", "truck", "Semi", "Dallas, TX", 32.7767, -96.7970, 320, 2022, "Freightliner", "80,000 lb GVWR", "Long-haul sleeper cab, APU equipped. Sample listing for demonstration only.", "https://images.unsplash.com/photo-1779583074717-e60fa13131ce?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200", 2.20),
+        ("Sample: 53ft Flatbed Trailer", "trailer", "Flatbed", "Phoenix, AZ", 33.4484, -112.0740, 110, 2020, "Fontaine", "48,000 lb", "Aluminum flatbed with straps and tarps. Sample listing for demonstration only.", "https://images.unsplash.com/photo-1740774017942-23f80f6477c5?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200", 1.75),
+        ("Sample: Box Truck 26ft w/ Liftgate", "truck", "Box", "Chicago, IL", 41.8781, -87.6298, 180, 2023, "Isuzu", "12,000 lb", "Non-CDL box truck with liftgate. Sample listing for demonstration only.", "https://images.unsplash.com/photo-1592838064575-70ed626d3a0e?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200", 1.40),
+    ]
+    for i, (title, kind, cat, loc, lat, lng, rate, year, make, cap, desc, photo, ppm) in enumerate(samples):
+        await db.listings.insert_one({
+            "id": str(uuid.uuid4()),
+            "owner_id": owner["id"],
+            "owner_name": owner["name"],
+            "title": title, "kind": kind, "category": cat, "location": loc,
+            "latitude": lat, "longitude": lng,
+            "geo": {"type": "Point", "coordinates": [lng, lat]},
+            "daily_rate": rate, "year": year, "make": make, "capacity": cap,
+            "description": desc, "photos": [photo],
+            "price_per_mile": ppm,
+            "rating": 0, "rating_count": 0,
+            "dot_number": "SAMPLE", "mc_number": "", "vin": "", "plate": "",
+            "insurance_provider": "Sample", "insurance_policy": "SAMPLE",
+            "insurance_expiry": "2099-12-31",
+            "sample": True,
+            "active": True, "deleted_at": None, "created_at": now_iso(),
+        })
+    logger.info("sample listings created")
+
+
 async def seed():
     await db.users.create_index("email", unique=True)
     await get_settings()
     await bootstrap_admin()
+    if sample_listings_enabled():
+        await seed_sample_listings()
     if not demo_seed_enabled():
         await retire_demo_accounts()
         logger.info("seed complete (demo data disabled)")
