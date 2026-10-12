@@ -1,8 +1,5 @@
-   {
-     "rewrites": [
-       {
-         "source": "/((?!_expo|assets|favicon.ico).*)",
-         "destination": "/index.html"
-       }
-     ]
-   }
+{
+  "rewrites": [
+    { "source": "/((?!_expo|assets|favicon.ico|privacy.html).*)", "destination": "/index.html" }
+  ]
+}

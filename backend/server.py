@@ -31,6 +31,8 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "rigrent-dev-secret-change-me")
+if JWT_SECRET == "rigrent-dev-secret-change-me":
+    logging.getLogger("rigrent").error("JWT_SECRET is not set - using an insecure default. Set it in the environment!")
 JWT_ALGO = "HS256"
 TOKEN_DAYS = 30
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -262,6 +264,10 @@ class MessageIn(BaseModel):
     context_type: Literal["booking", "request", "job"]
     context_id: str
     body: str = Field(min_length=1, max_length=2000)
+
+
+class DeleteAccountIn(BaseModel):
+    password: str
 
 
 class PushTokenIn(BaseModel):
@@ -2263,6 +2269,170 @@ async def unregister_push_token(data: PushTokenIn, user: dict = Depends(get_curr
     return {"ok": True}
 
 
+# ===================================================== ACCOUNT DELETION ======
+# Required by Apple (App Review Guideline 5.1.1(v)): any app that lets people
+# create an account must let them delete it from inside the app, along with
+# their personal data.
+#
+# What happens: the person's personal data and uploaded files are erased and
+# their login is closed for good. Records that also belong to *other* people —
+# bookings, payments, reviews, messages, job/bid history — are kept so the
+# other party's history isn't broken, but they're stripped of this person's
+# name (shown as "Deleted user"). The privacy policy (frontend/public/
+# privacy.html) describes exactly this, so keep the two in sync.
+DELETED_NAME = "Deleted user"
+
+# (collection, id field, display-name field): everywhere a user's name was
+# copied onto another record when it was written.
+_NAME_COPIES = [
+    ("listings", "owner_id", "owner_name"),
+    ("bookings", "owner_id", "owner_name"),
+    ("bookings", "renter_id", "renter_name"),
+    ("reviews", "renter_id", "renter_name"),
+    ("renter_reviews", "owner_id", "owner_name"),
+    ("messages", "sender_id", "sender_name"),
+    ("driver_jobs", "poster_id", "poster_name"),
+    ("driver_applications", "driver_id", "driver_name"),
+    ("roster", "driver_id", "driver_name"),
+    ("requests", "poster_id", "poster_name"),
+    ("bids", "vendor_id", "vendor_name"),
+]
+
+# Fields on the user record that hold personal data or links to billing
+# accounts. All removed; the record itself stays as a bare tombstone.
+_USER_FIELDS_TO_ERASE = [
+    "password_hash", "license_info", "insurance_info", "license_note", "insurance_note",
+    "driver_profile", "push_tokens", "favorite_listing_ids",
+    "service_latitude", "service_longitude", "service_radius_mi",
+    "stripe_account_id", "stripe_customer_id",
+    "subscription_id", "subscription_item_id", "subscription_tier",
+    "driver_subscription_id", "driver_subscription_item_id",
+]
+
+
+async def _delete_stored_files(user_id: str) -> None:
+    """Erase every file this user uploaded (license/insurance photos, rig
+    photos, inspection videos, résumé) from GridFS, plus the upload index."""
+    prefix = f"{APP_NAME}/uploads/{user_id}/"
+    cursor = fs_bucket.find({"filename": {"$regex": "^" + re.escape(prefix)}})
+    for f in await cursor.to_list(length=None):
+        await fs_bucket.delete(f["_id"])
+    await db.uploads.delete_many({"owner_id": user_id})
+
+
+@api.post("/account/delete")
+async def delete_account(data: DeleteAccountIn, user: dict = Depends(get_current_user)):
+    uid = user["id"]
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Administrator accounts can't be deleted from the app. Contact support.")
+    if not user.get("password_hash") or not pwd_context.verify(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    # 1. Never strand a trip in progress, a payment, or an unresolved dispute.
+    party = {"$or": [{"owner_id": uid}, {"renter_id": uid}]}
+    in_progress = await db.bookings.count_documents({**party, "status": {"$in": ["approved", "active"]}})
+    open_disputes = await db.bookings.count_documents({**party, "dispute_status": "open"})
+    if in_progress or open_disputes:
+        raise HTTPException(
+            status_code=409,
+            detail="Finish or cancel your approved/active bookings and resolve any open disputes before deleting your account.",
+        )
+
+    # 2. Stop all billing first — never delete someone who is still being charged.
+    #    Each id is cleared as soon as its subscription is gone, so a retry
+    #    after a partial failure doesn't try to cancel it twice.
+    if STRIPE_SECRET_KEY:
+        subs = []
+        if user.get("subscription_id") and user.get("subscription_status") != "canceled":
+            subs.append(("subscription_id", user["subscription_id"]))
+        if user.get("driver_subscription_id"):
+            subs.append(("driver_subscription_id", user["driver_subscription_id"]))
+        for field, sub_id in subs:
+            def _cancel(sid=sub_id):
+                stripe.Subscription.delete(sid)
+
+            try:
+                await run_in_threadpool(_cancel)
+            except Exception as e:
+                if getattr(e, "code", None) != "resource_missing":  # already gone at Stripe is fine
+                    logger.error(f"account delete: could not cancel {field} for {uid}: {e}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="We couldn't cancel your subscription billing, so your account was not deleted. Please try again.",
+                    )
+            await db.users.update_one({"id": uid}, {"$unset": {field: ""}})
+
+    now = now_iso()
+
+    # 3. Roster: end every seat this person holds or is billed for.
+    hired_by = await db.roster.find({"driver_id": uid, "status": "active"}, {"_id": 0, "owner_id": 1}).to_list(500)
+    await db.roster.update_many({"owner_id": uid, "status": "active"}, {"$set": {"status": "removed", "removed_at": now}})
+    await db.roster.update_many({"driver_id": uid, "status": "active"}, {"$set": {"status": "removed", "removed_at": now}})
+    for owner_id in {r["owner_id"] for r in hired_by}:
+        await sync_driver_seat_quantity(owner_id)  # their per-driver billing drops by one
+
+    # 4. Close out anything still open, and tell the other side.
+    pending = await db.bookings.find({**party, "status": "pending"}, {"_id": 0, "id": 1, "owner_id": 1, "renter_id": 1, "listing_title": 1}).to_list(500)
+    await db.bookings.update_many({**party, "status": "pending"}, {"$set": {"status": "cancelled"}})
+    for b in pending:
+        other = b["renter_id"] if b["owner_id"] == uid else b["owner_id"]
+        await notify(other, "Booking request cancelled", f"A request for {b.get('listing_title', 'a rig')} was cancelled because the other account was deleted.", "booking_cancelled", {"booking_id": b["id"]})
+    await db.requests.update_many({"poster_id": uid, "status": "open"}, {"$set": {"status": "cancelled"}})
+    await db.driver_jobs.update_many({"poster_id": uid, "status": "open"}, {"$set": {"status": "closed"}})
+    await db.bids.update_many({"vendor_id": uid, "status": "pending"}, {"$set": {"status": "withdrawn"}})
+    await db.driver_applications.update_many({"driver_id": uid, "status": "pending"}, {"$set": {"status": "withdrawn"}})
+    # Free-text a person typed on records that stay behind
+    await db.bids.update_many({"vendor_id": uid}, {"$set": {"note": ""}})
+    await db.driver_applications.update_many({"driver_id": uid}, {"$set": {"note": ""}})
+
+    # 5. Listings stay only as a hollow history stub for bookings that
+    #    referenced them: hidden, and stripped of anything revealing.
+    await db.listings.update_many(
+        {"owner_id": uid},
+        {"$set": {
+            "deleted_at": now, "active": False, "hidden": True,
+            "photos": [], "pickup_address": "", "pickup_instructions": "",
+            "access_code": "", "plate": "", "insurance_policy": "",
+        }},
+    )
+
+    # 6. Erase personal data outright. Files first: if storage fails we stop
+    #    here (account still intact, so the person can simply try again)
+    #    rather than leave their documents behind.
+    try:
+        await _delete_stored_files(uid)
+    except Exception as e:
+        logger.error(f"account delete: file cleanup failed for {uid}: {e}")
+        raise HTTPException(status_code=502, detail="We couldn't remove your uploaded files, so your account was not deleted. Please try again.")
+    await db.verifications.delete_many({"user_id": uid})
+    await db.notifications.delete_many({"user_id": uid})
+
+    # 7. Other people's records stop showing this person's name.
+    for coll, id_field, name_field in _NAME_COPIES:
+        await db[coll].update_many({id_field: uid}, {"$set": {name_field: DELETED_NAME}})
+
+    # 8. Close the login for good and blank the account down to a tombstone.
+    #    (The email is replaced, not just freed, so it can never match a
+    #    future sign-in; the same address may sign up again as a new account.)
+    await db.users.update_one(
+        {"id": uid},
+        {
+            "$set": {
+                "name": DELETED_NAME,
+                "email": f"deleted-{uid}@deleted.invalid",
+                "active": False,
+                "deleted_at": now,
+                "license_verified": False, "insurance_verified": False,
+                "license_status": "not_submitted", "insurance_status": "not_submitted",
+                "subscription_status": "none",
+            },
+            "$unset": {f: "" for f in _USER_FIELDS_TO_ERASE},
+        },
+    )
+    logger.info(f"account deleted: {uid}")
+    return {"ok": True}
+
+
 # ============================================================== MESSAGES ======
 async def _thread_participants(context_type: str, context_id: str) -> Optional[set]:
     """Who is allowed to read/write this conversation. None if the underlying
@@ -2789,6 +2959,8 @@ async def hire_driver(jid: str, data: AcceptBidIn, user: dict = Depends(get_curr
 async def admin_reseed_listings(user: dict = Depends(require("admin"))):
     """Wipes the demo listings and re-inserts them fresh from the current seed
     data (e.g. after updating a demo listing's photos in code)."""
+    if not demo_seed_enabled():
+        raise HTTPException(status_code=403, detail="Demo data is disabled")
     result = await db.listings.delete_many({})
     await seed()
     count = await db.listings.count_documents({})
@@ -2828,9 +3000,88 @@ async def review_verification(vid: str, data: ReviewIn, user: dict = Depends(req
 
 
 # ================================================================= SEED ========
+DEMO_ACCOUNTS = [
+    ("RigRent Admin", "admin@rigrent.com", "Admin12345!", "admin"),
+    ("Titan Fleet Co.", "owner@rigrent.com", "Owner12345!", "owner"),
+    ("John Trucker", "renter@rigrent.com", "Renter12345!", "renter"),
+    ("RoadHelp Towing", "vendor@rigrent.com", "Vendor12345!", "vendor"),
+]
+
+
+def demo_seed_enabled() -> bool:
+    """Demo accounts/listings (with publicly known passwords) are created only
+    when SEED_DEMO_DATA is explicitly set to a truthy value."""
+    return os.environ.get("SEED_DEMO_DATA", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+async def bootstrap_admin():
+    """Create or update the real admin from ADMIN_EMAIL / ADMIN_PASSWORD."""
+    email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    if len(password) < 10:
+        logger.error("ADMIN_PASSWORD must be at least 10 characters; admin not bootstrapped")
+        return
+    u = await db.users.find_one({"email": email})
+    if u:
+        updates = {"role": "admin", "active": True}
+        try:
+            same = pwd_context.verify(password, u.get("password_hash") or "")
+        except Exception:
+            same = False
+        if not same:
+            updates["password_hash"] = pwd_context.hash(password)
+        await db.users.update_one({"id": u["id"]}, {"$set": updates})
+        return
+    await db.users.insert_one({
+        "id": str(uuid.uuid4()),
+        "name": "RigRent Admin",
+        "email": email,
+        "password_hash": pwd_context.hash(password),
+        "role": "admin",
+        "active": True,
+        "license_verified": False,
+        "insurance_verified": False,
+        "license_info": None,
+        "insurance_info": None,
+        "license_status": "not_submitted",
+        "insurance_status": "not_submitted",
+        "license_note": None,
+        "insurance_note": None,
+        "created_at": now_iso(),
+    })
+    logger.info("admin bootstrapped")
+
+
+async def retire_demo_accounts():
+    """When demo data is off, disable any demo account that still uses its
+    published password, and hide the demo owner's listings."""
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    for _name, email, password, _role in DEMO_ACCOUNTS:
+        if email == admin_email:
+            continue
+        u = await db.users.find_one({"email": email})
+        if not u or not u.get("active", True):
+            continue
+        try:
+            still_public = pwd_context.verify(password, u.get("password_hash") or "")
+        except Exception:
+            still_public = False
+        if still_public:
+            await db.users.update_one({"id": u["id"]}, {"$set": {"active": False}})
+            await db.listings.update_many({"owner_id": u["id"]}, {"$set": {"active": False}})
+            logger.warning(f"disabled demo account {email}")
+
+
 async def seed():
     await db.users.create_index("email", unique=True)
     await get_settings()
+    await bootstrap_admin()
+    if not demo_seed_enabled():
+        await retire_demo_accounts()
+        logger.info("seed complete (demo data disabled)")
+        return
 
     async def ensure_user(name, email, password, role):
         u = await db.users.find_one({"email": email})
@@ -2856,10 +3107,11 @@ async def seed():
         await db.users.insert_one(dict(doc))
         return doc
 
-    await ensure_user("RigRent Admin", "admin@rigrent.com", "Admin12345!", "admin")
-    owner = await ensure_user("Titan Fleet Co.", "owner@rigrent.com", "Owner12345!", "owner")
-    await ensure_user("John Trucker", "renter@rigrent.com", "Renter12345!", "renter")
-    await ensure_user("RoadHelp Towing", "vendor@rigrent.com", "Vendor12345!", "vendor")
+    owner = None
+    for _n, _e, _p, _r in DEMO_ACCOUNTS:
+        _u = await ensure_user(_n, _e, _p, _r)
+        if _r == "owner":
+            owner = _u
 
     if await db.listings.count_documents({}) == 0:
         demo = [
