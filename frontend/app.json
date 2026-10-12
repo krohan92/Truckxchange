@@ -16,16 +16,9 @@
         "NSMicrophoneUsageDescription": "Record inspection walkaround videos",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "RigRent uses your location in the background to detect when you've arrived at pickup or return, so it can prompt you to start or finish a trip.",
         "UIBackgroundModes": [
-<<<<<<< HEAD
-          "location",
           "location"
         ],
         "ITSAppUsesNonExemptEncryption": false
-=======
-  "location"
-],
-"ITSAppUsesNonExemptEncryption": false
->>>>>>> 07775581d3376ad17e4614c94a6c8e121786190d
       }
     },
     "android": {
