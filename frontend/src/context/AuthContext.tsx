@@ -45,12 +45,15 @@ type AuthCtx = {
   refresh: () => Promise<void>;
 };
 
-const SEED: Record<string, { email: string; password: string }> = {
-  renter: { email: "renter@rigrent.com", password: "Renter12345!" },
-  owner: { email: "owner@rigrent.com", password: "Owner12345!" },
-  vendor: { email: "vendor@rigrent.com", password: "Vendor12345!" },
-  admin: { email: "admin@rigrent.com", password: "Admin12345!" },
-};
+// Demo credentials exist only in development builds; production bundles ship none.
+const SEED: Record<string, { email: string; password: string }> = __DEV__
+  ? {
+      renter: { email: "renter@rigrent.com", password: "Renter12345!" },
+      owner: { email: "owner@rigrent.com", password: "Owner12345!" },
+      vendor: { email: "vendor@rigrent.com", password: "Vendor12345!" },
+      admin: { email: "admin@rigrent.com", password: "Admin12345!" },
+    }
+  : {};
 
 const Ctx = createContext<AuthCtx>(null as any);
 export const useAuth = () => useContext(Ctx);
@@ -89,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginAs = async (role: "renter" | "owner" | "vendor" | "admin") => {
     const creds = SEED[role];
+    if (!creds) throw new Error("Quick access is not available");
     await login(creds.email, creds.password);
   };
 
