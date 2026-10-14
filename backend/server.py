@@ -970,6 +970,249 @@ async def create_listing(data: ListingIn, user: dict = Depends(require("owner", 
     return listing
 
 
+# ======================================================= BULK LISTING IMPORT ===
+BULK_MAX_ROWS = 200
+BULK_MAX_BYTES = 2 * 1024 * 1024
+TRUCK_CATEGORIES = ["Sleeper", "Day Cab", "Semi", "Box", "Flatbed Truck", "Dump Truck", "Tow Truck", "Cab & Chassis"]
+TRAILER_CATEGORIES = ["Flatbed", "Reefer", "Dry Van", "Lowboy"]
+BULK_COLUMNS = [
+    "title", "kind", "category", "location", "price_per_mile", "daily_rate",
+    "included_miles_per_day", "year", "make", "capacity", "mileage", "description",
+    "dot_number", "mc_number", "vin", "plate",
+    "insurance_provider", "insurance_policy", "insurance_expiry",
+    "pickup_address", "pickup_instructions", "access_code", "cancellation_policy", "photo_url",
+]
+BULK_TEMPLATE_ROWS = [
+    ["2022 Freightliner Cascadia", "truck", "Semi", "Dallas, TX", "2.20", "320", "250", "2022", "Freightliner", "80,000 lb GVWR", "45000", "Sleeper cab, APU equipped.", "1234567", "MC-123456", "1FUJGHDV0NLAA1234", "TX-ABC123", "Progressive Commercial", "POL-100200", "2027-06-30", "", "", "", "moderate", ""],
+    ["53ft Reefer Trailer", "trailer", "Reefer", "Atlanta, GA", "1.40", "145", "", "2021", "Utility", "44,000 lb", "", "Carrier reefer unit.", "1234567", "", "", "", "Progressive Commercial", "POL-100201", "2027-06-30", "", "", "", "flexible", ""],
+]
+
+
+def _cell_text(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d")
+    if hasattr(v, "isoformat") and not isinstance(v, (str, int, float)):
+        return v.isoformat()
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+
+def _read_spreadsheet(filename: str, content: bytes) -> list:
+    """Returns a list of dict rows keyed by normalised header names."""
+    import csv
+    import io
+    name = (filename or "").lower()
+    rows = []
+    if name.endswith(".xlsx") or name.endswith(".xlsm"):
+        try:
+            import openpyxl
+        except ImportError:
+            raise HTTPException(status_code=400, detail="Excel files are not supported on this server yet. Please save as CSV and upload that.")
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            raw = [list(r) for r in ws.iter_rows(values_only=True)]
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not read that Excel file.")
+    elif name.endswith(".csv") or name.endswith(".txt"):
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+        raw = [list(r) for r in csv.reader(io.StringIO(text))]
+    else:
+        raise HTTPException(status_code=400, detail="Upload a .csv or .xlsx file.")
+    raw = [r for r in raw if any(_cell_text(c) for c in r)]
+    if not raw:
+        raise HTTPException(status_code=400, detail="The file is empty.")
+    headers = [re.sub(r"[^a-z0-9]+", "_", _cell_text(h).lower()).strip("_") for h in raw[0]]
+    if "title" not in headers:
+        raise HTTPException(status_code=400, detail="Header row not found. Start from the template (first row must contain column names like title, kind, category).")
+    for r in raw[1:]:
+        rows.append({h: _cell_text(r[i]) if i < len(r) else "" for i, h in enumerate(headers) if h})
+    return rows
+
+
+def _num(val, kind=float):
+    val = (val or "").replace(",", "").replace("$", "").strip()
+    if val == "":
+        return None
+    n = float(val)
+    return int(n) if kind is int else n
+
+
+def _normalise_date(val: str) -> str:
+    val = (val or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(val, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return val
+
+
+def _validate_bulk_row(row: dict) -> tuple:
+    """Returns (listing_fields_dict | None, [error strings])."""
+    errs = []
+    g = lambda k: (row.get(k) or "").strip()
+    for req in ("title", "kind", "category", "location", "dot_number", "insurance_provider", "insurance_policy", "insurance_expiry", "price_per_mile"):
+        if not g(req):
+            errs.append(f"missing {req}")
+    kind = g("kind").lower()
+    if g("kind") and kind not in ("truck", "trailer"):
+        errs.append("kind must be truck or trailer")
+    category = ""
+    if kind in ("truck", "trailer") and g("category"):
+        allowed = TRUCK_CATEGORIES if kind == "truck" else TRAILER_CATEGORIES
+        match = next((c for c in allowed if c.lower() == g("category").lower()), None)
+        if not match:
+            errs.append(f"category must be one of: {', '.join(allowed)}")
+        else:
+            category = match
+    policy = g("cancellation_policy").lower() or "moderate"
+    if policy not in ("flexible", "moderate", "strict"):
+        errs.append("cancellation_policy must be flexible, moderate or strict")
+    try:
+        ppm = _num(g("price_per_mile"))
+        if g("price_per_mile") and (ppm is None or ppm <= 0):
+            errs.append("price_per_mile must be greater than 0")
+        daily = _num(g("daily_rate")) or 0
+        incl = _num(g("included_miles_per_day"))
+        year = _num(g("year"), int)
+        mileage = _num(g("mileage"), int)
+    except ValueError:
+        errs.append("a number column (price_per_mile, daily_rate, included_miles_per_day, year, mileage) has a non-numeric value")
+        ppm = daily = incl = year = mileage = None
+    expiry = _normalise_date(g("insurance_expiry"))
+    if g("insurance_expiry"):
+        exp = compute_expired(expiry)
+        if exp is None:
+            errs.append("insurance_expiry must be a date like 2027-06-30")
+        elif exp is True:
+            errs.append("insurance is expired")
+    photo = g("photo_url")
+    if photo and not photo.lower().startswith(("http://", "https://")):
+        errs.append("photo_url must start with http:// or https://")
+    if errs:
+        return None, errs
+    fields = {
+        "title": g("title"), "kind": kind, "category": category, "location": g("location"),
+        "latitude": None, "longitude": None,
+        "pickup_address": g("pickup_address"), "pickup_instructions": g("pickup_instructions"),
+        "access_code": g("access_code"), "cancellation_policy": policy,
+        "price_per_mile": ppm, "daily_rate": daily, "included_miles_per_day": incl,
+        "refuel_fee": None, "year": year, "make": g("make") or None, "capacity": g("capacity") or None,
+        "mileage": mileage, "description": g("description"),
+        "photos": [photo] if photo else [],
+        "dot_number": g("dot_number"), "mc_number": g("mc_number"), "vin": g("vin").upper(), "plate": g("plate"),
+        "insurance_provider": g("insurance_provider"), "insurance_policy": g("insurance_policy"), "insurance_expiry": expiry,
+    }
+    try:
+        ListingIn(**fields)
+    except Exception as e:
+        return None, [f"invalid data: {str(e)[:120]}"]
+    return fields, []
+
+
+@api.get("/bulk-listing-template")
+async def bulk_listing_template():
+    """CSV template owners fill in (Excel opens it fine) and upload to /bulk-listings."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(BULK_COLUMNS)
+    for r in BULK_TEMPLATE_ROWS:
+        w.writerow(r)
+    return Response(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="rigrent-listings-template.csv"'},
+    )
+
+
+@api.post("/bulk-listings")
+async def bulk_listings(
+    file: UploadFile = File(...),
+    dry_run: bool = Query(True),
+    user: dict = Depends(require("owner", "admin")),
+):
+    """Import many trucks/trailers from a CSV or Excel file. With dry_run=true
+    (default) nothing is saved: the rows are checked and a report returned.
+    With dry_run=false everything is saved, but only if EVERY row is valid and
+    the owner's plan has room for all of them (all-or-nothing)."""
+    content = await file.read()
+    if len(content) > BULK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File is too large (max 2 MB).")
+    rows = await run_in_threadpool(_read_spreadsheet, file.filename or "", content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found under the header row.")
+    if len(rows) > BULK_MAX_ROWS:
+        raise HTTPException(status_code=400, detail=f"Too many rows ({len(rows)}). Max {BULK_MAX_ROWS} per file.")
+
+    valid, errors = [], []
+    seen_vins = set()
+    for i, row in enumerate(rows, start=2):  # row 1 is the header
+        fields, errs = _validate_bulk_row(row)
+        if fields and fields["vin"]:
+            if fields["vin"] in seen_vins:
+                errs = ["duplicate VIN in this file"]
+                fields = None
+            else:
+                seen_vins.add(fields["vin"])
+        if errs:
+            errors.append({"row": i, "title": (row.get("title") or "")[:60], "errors": errs})
+        else:
+            valid.append(fields)
+
+    report = {
+        "total": len(rows),
+        "valid": len(valid),
+        "error_count": len(errors),
+        "errors": errors[:50],
+        "preview": [{"title": f["title"], "kind": f["kind"], "category": f["category"], "location": f["location"]} for f in valid[:5]],
+    }
+    if dry_run:
+        return report
+    if errors:
+        raise HTTPException(status_code=400, detail=f"Fix the {len(errors)} row(s) with errors and upload again. Nothing was imported.")
+
+    settings = await get_settings()
+    await check_subscription_allows_new_listing(user, settings)  # needs an active plan
+    if user["role"] != "admin":
+        tier = settings.get("subscription_tiers", DEFAULT_SUBSCRIPTION_TIERS).get(user.get("subscription_tier"), {})
+        limit = tier.get("truck_limit")
+        if limit is not None:
+            current = await db.listings.count_documents({"owner_id": user["id"], "deleted_at": None})
+            if current + len(valid) > limit:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"Your {tier.get('name', 'current')} plan allows up to {limit} trucks/trailers. You have {current} and are importing {len(valid)}. Upgrade your plan or import fewer.",
+                )
+    docs = []
+    for f in valid:
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "owner_id": user["id"],
+            "owner_name": user["name"],
+            **f,
+            "hidden": False,
+            "rating": 0,
+            "rating_count": 0,
+            "active": True,
+            "deleted_at": None,
+            "created_at": now_iso(),
+        })
+    await db.listings.insert_many([dict(d) for d in docs])
+    if user["role"] == "owner":
+        await sync_enterprise_truck_quantity(user)
+    report["imported"] = len(docs)
+    return report
+
+
 @api.get("/listings")
 async def list_listings(
     category: Optional[str] = None,

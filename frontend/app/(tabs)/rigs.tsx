@@ -38,6 +38,9 @@ export default function Rigs() {
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <NotificationBell />
+          <Pressable testID="import-rigs-btn" onPress={() => router.push("/import-listings")} style={[styles.addBtn, { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border }]}>
+            <Icon name="file-upload-outline" size={22} color={colors.onSurface} />
+          </Pressable>
           <Pressable testID="add-rig-btn" onPress={() => router.push("/create-listing")} style={styles.addBtn}>
             <Icon name="plus" size={24} color={colors.onBrand} />
           </Pressable>

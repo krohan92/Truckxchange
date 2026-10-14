@@ -70,3 +70,32 @@ export async function uploadFile(uri: string, name: string, type: string): Promi
   const data = await res.json();
   return data.path as string;
 }
+
+export function bulkTemplateUrl(): string {
+  return `${BASE}/bulk-listing-template`;
+}
+
+// Upload a CSV/Excel file of listings. dryRun=true only checks it.
+export async function uploadListingsSheet(uri: string, name: string, mime: string, dryRun: boolean): Promise<any> {
+  const token = await getToken();
+  const form = new FormData();
+  if (Platform.OS === "web") {
+    const blob = await (await fetch(uri)).blob();
+    form.append("file", blob, name);
+  } else {
+    form.append("file", { uri, name, type: mime || "application/octet-stream" } as any);
+  }
+  const res = await fetch(`${BASE}/bulk-listings?dry_run=${dryRun ? "true" : "false"}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  const text = await res.text();
+  let data: any = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const detail = data && data.detail;
+    throw new Error(typeof detail === "string" ? detail : "Upload failed");
+  }
+  return data;
+}
