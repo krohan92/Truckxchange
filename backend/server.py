@@ -600,7 +600,6 @@ async def ensure_driver_seat_subscription(owner: dict, settings: dict) -> Option
     def _create_session():
         kwargs = dict(
             mode="subscription",
-            payment_method_types=["card"],
             line_items=[{
                 "price_data": {
                     "currency": "usd",
@@ -1834,7 +1833,6 @@ async def pay_booking(bid: str, user: dict = Depends(get_current_user)):
     def _create_session():
         return stripe.checkout.Session.create(
             mode="payment",
-            payment_method_types=["card"],
             customer_creation="always",
             line_items=[{
                 "price_data": {
@@ -2160,7 +2158,6 @@ async def subscribe(data: SubscribeIn, user: dict = Depends(require("owner", "ad
     def _create_session():
         kwargs = dict(
             mode="subscription",
-            payment_method_types=["card"],
             line_items=[{
                 "price_data": {
                     "currency": "usd",
@@ -2725,7 +2722,6 @@ async def accept_bid(rid: str, data: AcceptBidIn, user: dict = Depends(get_curre
     def _create_session():
         return stripe.checkout.Session.create(
             mode="payment",
-            payment_method_types=["card"],
             customer_creation="always",
             line_items=[{
                 "price_data": {"currency": "usd", "product_data": {"name": req["title"]}, "unit_amount": price_cents},
@@ -2937,7 +2933,6 @@ async def hire_driver(jid: str, data: AcceptBidIn, user: dict = Depends(get_curr
     def _create_session():
         return stripe.checkout.Session.create(
             mode="payment",
-            payment_method_types=["card"],
             customer_creation="always",
             line_items=[{
                 "price_data": {"currency": "usd", "product_data": {"name": f"Placement fee \u2014 {job['title']}"}, "unit_amount": fee_cents},
