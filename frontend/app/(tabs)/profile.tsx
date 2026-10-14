@@ -10,6 +10,7 @@ import { setLanguage, SupportedLanguage } from "@/src/i18n";
 import { Txt, Display, Icon, Card, Badge, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
 import { PRIVACY_POLICY_URL } from "@/src/legal";
+import { openExternal } from "@/src/nav";
 
 const ROLE_LABEL: any = { renter: "Trucker", owner: "Fleet Owner", vendor: "Service Company", admin: "Administrator" };
 
@@ -108,7 +109,7 @@ export default function Profile() {
     setConnectBusy(true);
     try {
       const res = await apiFetch<{ onboarding_url: string }>("/stripe/connect", { method: "POST" });
-      await Linking.openURL(res.onboarding_url);
+      await openExternal(res.onboarding_url);
     } catch {}
     finally { setConnectBusy(false); }
   };

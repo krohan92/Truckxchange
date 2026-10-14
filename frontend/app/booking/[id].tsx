@@ -7,7 +7,7 @@ import { apiFetch, uploadFile } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field, Chip } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
-import { goBack } from "@/src/nav";
+import { goBack, openExternal } from "@/src/nav";
 
 const STATUS_TONE: any = { pending: "warning", approved: "success", active: "brand", completed: "muted", declined: "error", cancelled: "error" };
 
@@ -153,7 +153,7 @@ export default function BookingDetail() {
     setPayBusy(true);
     try {
       const res = await apiFetch<{ checkout_url: string }>(`/bookings/${id}/pay`, { method: "POST" });
-      await Linking.openURL(res.checkout_url);
+      await openExternal(res.checkout_url);
     } catch (e: any) {
       setPayError(e.message || "Could not start checkout");
     } finally {

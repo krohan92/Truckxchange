@@ -8,7 +8,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
-import { goBack } from "@/src/nav";
+import { goBack, openExternal } from "@/src/nav";
 
 const CAT_ICON: any = { tow: "tow-truck", repair: "wrench", maintenance: "oil" };
 
@@ -58,7 +58,7 @@ export default function RequestDetail() {
     try {
       const res = await apiFetch<{ checkout_url: string }>(`/requests/${id}/accept`, { method: "POST", body: { bid_id: bidId } });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      await Linking.openURL(res.checkout_url);
+      await openExternal(res.checkout_url);
     } catch (e: any) {
       Alert.alert("Couldn't start payment", e.message || "Try again in a moment.");
     } finally {

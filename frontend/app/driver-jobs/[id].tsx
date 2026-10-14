@@ -8,7 +8,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Icon, Loader, Badge, Card, Btn, Field } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
-import { goBack } from "@/src/nav";
+import { goBack, openExternal } from "@/src/nav";
 
 export default function DriverJobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -52,7 +52,7 @@ export default function DriverJobDetail() {
     try {
       const res = await apiFetch<{ checkout_url: string }>(`/driver-jobs/${id}/hire`, { method: "POST", body: { bid_id: applicationId } });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      await Linking.openURL(res.checkout_url);
+      await openExternal(res.checkout_url);
     } catch (e: any) {
       Alert.alert("Couldn't start payment", e.message || "Try again in a moment.");
     } finally {

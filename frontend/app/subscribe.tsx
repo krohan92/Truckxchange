@@ -6,7 +6,7 @@ import { apiFetch } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { Txt, Display, Btn, Icon, Loader, Badge } from "@/src/ui";
 import { colors, spacing, radius, type } from "@/src/theme";
-import { goBack } from "@/src/nav";
+import { goBack, openExternal } from "@/src/nav";
 
 type Tier = {
   name: string;
@@ -56,7 +56,7 @@ export default function Subscribe() {
     setBusyTier(tierKey);
     try {
       const res = await apiFetch<{ checkout_url: string }>("/subscribe", { method: "POST", body: { tier: tierKey } });
-      await Linking.openURL(res.checkout_url);
+      await openExternal(res.checkout_url);
     } catch (e: any) {
       setError(e.message);
     } finally {
